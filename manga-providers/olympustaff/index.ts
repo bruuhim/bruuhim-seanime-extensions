@@ -25,33 +25,51 @@ class Provider {
         const html = await resp.text()
         const $ = LoadDoc(html)
 
-        const results: SearchResult[] = []
+        const resultsMap = new Map<string, SearchResult>()
 
-        $(".book-detailed-item, .manga-item").each((i: number, el: any) => {
-            const titleEl = el.find("h3 a, .manga-name a, .post-title a").first()
-            if (titleEl.length() === 0) return
-
-            const title = titleEl.text().trim()
-            const href = titleEl.attr("href")
+        $("a").each((i: number, el: any) => {
+            const href = el.attr("href")
             if (!href) return
 
-            const slugMatch = href.match(/\/series\/([^/]+)/)
+            // Match /series/slug pattern
+            const slugMatch = href.match(/\/series\/([^/]+)$/) || href.match(/\/series\/([^/]+)\/$/)
             if (!slugMatch) return
             const slug = slugMatch[1]
 
-            const imgEl = el.find("img")
-            const image = imgEl.attr("data-src")?.trim() || 
-                          imgEl.attr("src")?.trim()
+            // Avoid duplicates
+            if (resultsMap.has(slug)) return
 
-            results.push({
+            // Start from the anchor and look for title/image
+            // Title is usually arguably the anchor text or a child 
+            let title = el.text().trim()
+            if (!title) {
+                 const titleEl = el.find("h3, h4, .title, .post-title")
+                 if (titleEl.length() > 0) title = titleEl.text().trim()
+            }
+            if (!title) return // Skip if no title found
+
+            // Image: look inside or near the anchor
+            // 1. Look inside the anchor
+            let imgEl = el.find("img")
+            
+            // 2. If not inside, look in parent (common in card layouts)
+            if (imgEl.length() === 0) {
+                imgEl = el.closest(".item, .post-item, .box, div").find("img")
+            }
+
+            const image = imgEl.attr("data-src")?.trim() || 
+                          imgEl.attr("src")?.trim() ||
+                          "" // Allow empty image if we can't find one, better than nothing
+
+            resultsMap.set(slug, {
                 id: slug,
                 title: title,
                 image: image
             })
         })
 
-        console.log(`[OlympusStaff] Found ${results.length} results`)
-        return results
+        console.log(`[OlympusStaff] Found ${resultsMap.size} unique results`)
+        return Array.from(resultsMap.values())
     }
 
     async findChapters(mangaId: string): Promise<ChapterDetails[]> {
