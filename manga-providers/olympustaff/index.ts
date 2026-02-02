@@ -5,7 +5,6 @@ class Provider {
     private userAgent: string = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
 
     private async fetch(url: string, opts: RequestInit = {}): Promise<Response> {
-        console.log(`[OlympusStaff] Fetching: ${url}`)
         try {
             const resp = await fetch(url, {
                 ...opts,
@@ -15,16 +14,13 @@ class Provider {
                     ...opts.headers,
                 }
             })
-            console.log(`[OlympusStaff] Status: ${resp.status}`)
             return resp
         } catch (e) {
-            console.error(`[OlympusStaff] Fetch error: ${(e as Error).message}`)
             throw e
         }
     }
 
     async search({ query }: QueryOptions): Promise<SearchResult[]> {
-        console.log(`[OlympusStaff] Searching for: ${query}`)
         try {
             const url = `${this.api}/?s=${encodeURIComponent(query)}`
             const resp = await this.fetch(url)
@@ -44,21 +40,8 @@ class Provider {
                 const slug = slugMatch[1]
                 if (resultsMap.has(slug)) return
 
-                // Avoid chapter links (series/slug/chapter-1)
-                // If it has a number at the end, it MIGHT be a chapter, but some series end with numbers.
-                // Usually chapter links have another segment.
-                // /series/slug is series. /series/slug/chapter is chapter.
-                const segments = href.split("/").filter((s: string) => s.length > 0)
-                // segments: ['https:', '', 'domain', 'series', 'slug'] -> length 5 (if absolute)
-                // or ['series', 'slug'] -> length 2 (if relative)
-                // Safe bet: if it has a 3rd part after series, likely a chapter
-                // Url structure: https://olympustaff.com/series/slug/ => correct
-                // https://olympustaff.com/series/slug/chapter-1 => incorrect
-                
-                // Let's use strict regex for series page
-                // Ends with /series/slug or /series/slug/
+                // Avoid chapter links
                 if (!/\/series\/[^/]+\/?$/.test(href)) {
-                     // check if it's a chapter link
                      if (/\/series\/[^/]+\/\d+/.test(href)) return 
                 }
 
@@ -114,16 +97,13 @@ class Provider {
                 })
             })
             
-            console.log(`[OlympusStaff] Search found ${resultsMap.size} results`)
             return Array.from(resultsMap.values())
         } catch (e) {
-            console.error(`[OlympusStaff] Search error: ${(e as Error).message}\n${(e as Error).stack}`)
             return []
         }
     }
 
     async findChapters(mangaId: string): Promise<ChapterDetails[]> {
-        console.log(`[OlympusStaff] Finding chapters for: ${mangaId}`)
         try {
             const url = `${this.api}/series/${mangaId}`
             const resp = await this.fetch(url)
@@ -148,8 +128,6 @@ class Provider {
                 let rawText = el.text().trim()
                 rawText = rawText.replace(/\s+/g, " ")
                 
-                console.log(`[OlympusStaff] Raw text for ch ${chapterNum}: "${rawText}"`)
-
                 const garbagePatterns = [
                     /\d{4}/, 
                     /(ago|min|hour|day|week|month|year)/i, 
@@ -196,16 +174,13 @@ class Provider {
                 chapter.index = index
             })
 
-            console.log(`[OlympusStaff] Found ${chapters.length} chapters`)
             return chapters
         } catch (e) {
-            console.error(`[OlympusStaff] findChapters error: ${(e as Error).message}\n${(e as Error).stack}`)
             return []
         }
     }
 
     async findChapterPages(chapterId: string): Promise<ChapterPage[]> {
-        console.log(`[OlympusStaff] Finding pages for chapter: ${chapterId}`)
         try {
             const [mangaId, chapterNum] = chapterId.split("$")
             const url = `${this.api}/series/${mangaId}/${chapterNum}`
@@ -240,10 +215,8 @@ class Provider {
                 }
             })
             
-            console.log(`[OlympusStaff] Found ${pages.length} pages`)
             return pages
         } catch (e) {
-            console.error(`[OlympusStaff] findChapterPages error: ${(e as Error).message}`)
             return []
         }
     }
