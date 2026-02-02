@@ -5,6 +5,7 @@ class Provider {
     private userAgent: string = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
 
     private async fetch(url: string, opts: RequestInit = {}): Promise<Response> {
+        console.log(`[OlympusStaff] Fetching: ${url}`)
         const resp = await fetch(url, {
             ...opts,
             headers: {
@@ -13,10 +14,12 @@ class Provider {
                 ...opts.headers,
             }
         })
+        console.log(`[OlympusStaff] Status: ${resp.status}`)
         return resp
     }
 
     async search({ query }: QueryOptions): Promise<SearchResult[]> {
+        console.log(`[OlympusStaff] Searching for: ${query}`)
         const url = `${this.api}/?s=${encodeURIComponent(query)}`
         const resp = await this.fetch(url)
         const html = await resp.text()
@@ -42,17 +45,31 @@ class Provider {
              let title = el.find("h3, h4, .title, .post-title").text().trim() || titleEl.text().trim()
              if (!title) return
 
+             // LOG: Check what we found
+             // console.log(`[OlympusStaff] Found candidate: ${slug} | Title: ${title}`)
+
              // Fuzzy filter
              const queryWords = query.toLowerCase().split(" ").filter(w => w.length > 2)
              const titleLower = title.toLowerCase()
              const match = queryWords.length === 0 || queryWords.some(w => titleLower.includes(w))
-             if (!match) return;
+             
+             if (!match) {
+                // console.log(`[OlympusStaff] Filtered out: ${title}`)
+                return;
+             }
 
              // Image
              const imgEl = el.find("img")
-             let image = imgEl.attr("data-src")?.trim() || 
-                           imgEl.attr("src")?.trim() || 
-                           imgEl.attr("srcset")?.split(",")[0]?.split(" ")[0]?.trim() || 
+             
+             // LOG: Image debugging
+             const dataSrc = imgEl.attr("data-src")
+             const src = imgEl.attr("src")
+             const srcset = imgEl.attr("srcset")
+             console.log(`[OlympusStaff] Image match for ${slug}: data-src=${dataSrc}, src=${src}, srcset=${srcset}`)
+
+             let image = dataSrc?.trim() || 
+                           src?.trim() || 
+                           srcset?.split(",")[0]?.split(" ")[0]?.trim() || 
                            ""
              
              if (image && !image.startsWith("http")) {
@@ -65,11 +82,13 @@ class Provider {
                  image: image
              })
         })
-
+        
+        console.log(`[OlympusStaff] Search found ${resultsMap.size} results`)
         return Array.from(resultsMap.values())
     }
 
     async findChapters(mangaId: string): Promise<ChapterDetails[]> {
+        console.log(`[OlympusStaff] Finding chapters for: ${mangaId}`)
         const url = `${this.api}/series/${mangaId}`
         const resp = await this.fetch(url)
         const html = await resp.text()
@@ -93,6 +112,9 @@ class Provider {
             let rawText = el.text().trim()
             // Normalize spaces
             rawText = rawText.replace(/\s+/g, " ")
+
+            // LOG: Raw title text
+            console.log(`[OlympusStaff] Raw chapter text for #${chapterNum}: "${rawText}"`)
 
             // Patterns to ignore
             // 2023, 14 hours ago, 31,673 views, 31.673 
@@ -130,8 +152,11 @@ class Provider {
                 }
                 
                 if (!isGarbage && !p.includes(chapterNum)) {
+                    console.log(`[OlympusStaff] Accepted part: "${p}"`)
                     title = p
                     break
+                } else {
+                    console.log(`[OlympusStaff] Rejected part: "${p}"`)
                 }
             }
 
