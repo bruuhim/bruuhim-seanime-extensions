@@ -55,7 +55,8 @@ class Provider {
             // Image: look inside or near the anchor
             let imgEl = el.find("img")
             if (imgEl.length() === 0) {
-                imgEl = el.closest(".item, .post-item, .box, div").find("img")
+                // Look in parent container
+                imgEl = el.closest("div, article, li").find("img")
             }
 
             let image = imgEl.attr("data-src")?.trim() || 
@@ -105,7 +106,7 @@ class Provider {
             // Heuristic: Check lines for actual content that isn't just numbers or dates
             for (const line of lines) {
                 const isDate = /\d+ (ago|min|hour|day|week|month|year)/i.test(line)
-                const isViewCount = /^\d[\d,.]*$/.test(line) // e.g. "31,673" or "387"
+                const isViewCount = /^[\d,.]+$/.test(line) || /^\d+\s*$/.test(line) // match "31,673" or "387 " strictly
                 const isChapterNum = line.includes(chapterNum) || line.includes("الفصل")
 
                 if (!isDate && !isViewCount && !isChapterNum) {

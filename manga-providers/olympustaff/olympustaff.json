@@ -1,13 +1,13 @@
 {
   "id": "al-olympustaff",
   "name": "OlympusStaff",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "Bruuhim",
   "description": "Manga provider for olympustaff.com (Arabic)",
   "type": "manga-provider",
   "language": "typescript",
   "lang": "ar",
-  "icon": "https://scontent.frba1-2.fna.fbcdn.net/v/t39.30808-6/289569052_105583358879845_4332741347350667659_n.jpg?_nc_cat=111&ccb=1-7&_nc_sid=6ee11a&_nc_eui2=AeGGvtQjvY-o0gN20k3TBpKg34D7jIDbppHfgPuMgNumkT6I9J9LdzwgyvWcgNATH9LgGv9ibNvxTky9kKAY_FTv&_nc_ohc=aQ0ATtqmy0oQ7kNvwFYZl_E&_nc_oc=AdnUHSrgece7GN47Frd2XIJ4EsT5kgjrjATueCOIZ9-0jogMovl9Y7dADZMoZEFzJwQ&_nc_zt=23&_nc_ht=scontent.frba1-2.fna&_nc_gid=jaHgbtBsQ6nPRFf5Vxig9g&oh=00_AftnmSqJsefP9ixV8ar1-GLv2v9w82ZpqJ0ZqXA7TiQeyQ&oe=6986B845",
+  "icon": "https://i.imgur.com/ulnGanf.jpeg",
   "payloadURI": "https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/manga-providers/olympustaff/index.ts",
   "manifestURI": "https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/manga-providers/olympustaff/olympustaff.json"
 }
