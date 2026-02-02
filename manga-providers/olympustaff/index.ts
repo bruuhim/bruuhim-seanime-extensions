@@ -24,54 +24,46 @@ class Provider {
 
         const resultsMap = new Map<string, SearchResult>()
 
-        $("a").each((i: number, el: any) => {
-            const href = el.attr("href")
-            if (!href) return
+        // Iterate over likely container elements first
+        $("article, .item, .post-item, .box, .movie-item, .list-item, div[class*='item']").each((i: number, el: any) => {
+             const titleEl = el.find("a").first()
+             if (!titleEl.length) return
+             
+             const href = titleEl.attr("href")
+             if (!href || !href.includes("/series/")) return
 
-            // Match /series/slug pattern
-            const slugMatch = href.match(/\/series\/([^/]+)$/) || href.match(/\/series\/([^/]+)\/$/)
-            if (!slugMatch) return
-            const slug = slugMatch[1]
+             // slug
+             const slugMatch = href.match(/\/series\/([^/]+)/)
+             if (!slugMatch) return
+             const slug = slugMatch[1]
+             if (resultsMap.has(slug)) return
 
-            // Avoid duplicates
-            if (resultsMap.has(slug)) return
+             // Title
+             let title = el.find("h3, h4, .title, .post-title").text().trim() || titleEl.text().trim()
+             if (!title) return
 
-            // Start from the anchor and look for title/image
-            let title = el.text().trim()
-            if (!title) {
-                 const titleEl = el.find("h3, h4, .title, .post-title")
-                 if (titleEl.length() > 0) title = titleEl.text().trim()
-            }
-            if (!title) return // Skip if no title found
+             // Fuzzy filter
+             const queryWords = query.toLowerCase().split(" ").filter(w => w.length > 2)
+             const titleLower = title.toLowerCase()
+             const match = queryWords.length === 0 || queryWords.some(w => titleLower.includes(w))
+             if (!match) return;
 
-            // Simple fuzzy filter: only keep if title includes part of the query
-            // Split query into words and check if at least one word is in the title
-            const queryWords = query.toLowerCase().split(" ").filter(w => w.length > 2)
-            const titleLower = title.toLowerCase()
-            const match = queryWords.length === 0 || queryWords.some(w => titleLower.includes(w))
-            
-            if (!match) return;
+             // Image
+             const imgEl = el.find("img")
+             let image = imgEl.attr("data-src")?.trim() || 
+                           imgEl.attr("src")?.trim() || 
+                           imgEl.attr("srcset")?.split(",")[0]?.split(" ")[0]?.trim() || 
+                           ""
+             
+             if (image && !image.startsWith("http")) {
+                 image = (this.api + image).replace(/([^:]\/)\/+/g, "$1")
+             }
 
-            // Image: look inside or near the anchor
-            let imgEl = el.find("img")
-            if (imgEl.length() === 0) {
-                // Look in parent container
-                imgEl = el.closest("div, article, li").find("img")
-            }
-
-            let image = imgEl.attr("data-src")?.trim() || 
-                          imgEl.attr("src")?.trim() ||
-                          ""
-            
-            if (image && !image.startsWith("http")) {
-                image = (this.api + image).replace(/([^:]\/)\/+/g, "$1") // fix double slashes except protocol
-            }
-
-            resultsMap.set(slug, {
-                id: slug,
-                title: title,
-                image: image
-            })
+             resultsMap.set(slug, {
+                 id: slug,
+                 title: title,
+                 image: image
+             })
         })
 
         return Array.from(resultsMap.values())
@@ -99,20 +91,56 @@ class Provider {
 
             // Clean up title: Remove date, views, and numbers
             let rawText = el.text().trim()
-            const lines = rawText.split(/[\n\r]+/).map((l: string) => l.trim()).filter((l: string) => l.length > 0)
-            
-            let title = `Chapter ${chapterNum}`
-            
-            // Heuristic: Check lines for actual content that isn't just numbers or dates
-            for (const line of lines) {
-                const isDate = /\d+ (ago|min|hour|day|week|month|year)/i.test(line)
-                const isViewCount = /^[\d,.]+$/.test(line) || /^\d+\s*$/.test(line) // match "31,673" or "387 " strictly
-                const isChapterNum = line.includes(chapterNum) || line.includes("الفصل")
+            // Normalize spaces
+            rawText = rawText.replace(/\s+/g, " ")
 
-                if (!isDate && !isViewCount && !isChapterNum) {
-                     title = line
-                     break 
+            // Patterns to ignore
+            // 2023, 14 hours ago, 31,673 views, 31.673 
+            const garbagePatterns = [
+                /\d{4}/, // Year
+                /(ago|min|hour|day|week|month|year)/i, // Time relative
+                /[\d,.]+\s*(views|مشاهدة)/i, // View count with label
+                /^\s*[\d,.]+\s*$/, // Just numbers
+                /الفصل\s*\d+/ // "Chapter X" in Arabic (we add generic back later)
+            ]
+
+            // Heuristic strategies to find a real title
+            // 1. Check if the text contains a real title separate from the chapter number
+            let title = ""
+            
+            // Should usually correspond to the line that does NOT match garbage
+            // But since we flattened newlines with Replace, we split by common separators if needed? 
+            // Better: re-fetch text with newlines if possible? 
+            // In Cheerio/HTML, typical newlines might be lost if we just .text() a block with <br> or divs.
+            // Let's assume the site uses <span> or <div> for details.
+            
+            // Let's use the provided text but filter parts
+            const parts = rawText.split(/[\n\t•]+/) // split by bullets or newlines if preserved
+            
+            for (const part of parts) {
+                const p = part.trim()
+                if (p.length < 2) continue
+                
+                let isGarbage = false
+                for (const pattern of garbagePatterns) {
+                    if (pattern.test(p)) {
+                        isGarbage = true
+                        break
+                    }
                 }
+                
+                if (!isGarbage && !p.includes(chapterNum)) {
+                    title = p
+                    break
+                }
+            }
+
+            // Fallback: Default to "Chapter X"
+            if (!title) {
+                 title = `Chapter ${chapterNum}`
+            } else {
+                 // If we found a title, format it nice
+                 title = `Chapter ${chapterNum} - ${title}`
             }
 
             chapters.push({
@@ -142,9 +170,18 @@ class Provider {
 
         const pages: ChapterPage[] = []
 
-        $(".chapter-content img, .reading-content img, .page-break img").each((i: number, el: any) => {
+        // Try reading content container first details
+        let images = $(".chapter-content img, .reading-content img, .page-break img")
+        
+        // Fallback for some madara themes
+        if (images.length === 0) {
+            images = $("img[class*='wp-manga-chapter-img']")
+        }
+
+        images.each((i: number, el: any) => {
             let src = el.attr("data-src")?.trim() || 
-                        el.attr("src")?.trim()
+                        el.attr("src")?.trim() ||
+                        el.attr("data-lazy-src")?.trim()
             
             if (src && !src.startsWith("http")) {
                 src = (this.api + src).replace(/([^:]\/)\/+/g, "$1")
