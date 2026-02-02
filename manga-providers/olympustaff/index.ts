@@ -40,7 +40,6 @@ class Provider {
             if (resultsMap.has(slug)) return
 
             // Start from the anchor and look for title/image
-            // Title is usually arguably the anchor text or a child 
             let title = el.text().trim()
             if (!title) {
                  const titleEl = el.find("h3, h4, .title, .post-title")
@@ -48,18 +47,27 @@ class Provider {
             }
             if (!title) return // Skip if no title found
 
-            // Image: look inside or near the anchor
-            // 1. Look inside the anchor
-            let imgEl = el.find("img")
+            // Simple fuzzy filter: only keep if title includes part of the query
+            // Split query into words and check if at least one word is in the title
+            const queryWords = query.toLowerCase().split(" ").filter(w => w.length > 2)
+            const titleLower = title.toLowerCase()
+            const match = queryWords.length === 0 || queryWords.some(w => titleLower.includes(w))
             
-            // 2. If not inside, look in parent (common in card layouts)
+            if (!match) return;
+
+            // Image: look inside or near the anchor
+            let imgEl = el.find("img")
             if (imgEl.length() === 0) {
                 imgEl = el.closest(".item, .post-item, .box, div").find("img")
             }
 
-            const image = imgEl.attr("data-src")?.trim() || 
+            let image = imgEl.attr("data-src")?.trim() || 
                           imgEl.attr("src")?.trim() ||
-                          "" // Allow empty image if we can't find one, better than nothing
+                          ""
+            
+            if (image && !image.startsWith("http")) {
+                image = (this.api + image).replace(/([^:]\/)\/+/g, "$1") // fix double slashes except protocol
+            }
 
             resultsMap.set(slug, {
                 id: slug,
