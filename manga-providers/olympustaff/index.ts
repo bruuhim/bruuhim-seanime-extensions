@@ -97,7 +97,28 @@ class Provider {
             if (!chapterMatch) return
             const chapterNum = chapterMatch[1]
 
-            const title = el.text().trim() || `Chapter ${chapterNum}`
+            // Clean up title: text often contains date, views, etc.
+            // Split by newline and take the first few lines that aren't dates/numbers
+            let rawText = el.text().trim()
+            
+            // Remove typical metadata patterns if they exist in the text block
+            // Often format is: "Chapter X \n Title \n Date"
+            const lines = rawText.split(/[\n\r]+/).map((l: string) => l.trim()).filter((l: string) => l.length > 0)
+            
+            let title = `Chapter ${chapterNum}`
+            if (lines.length > 0) {
+                 // The first line is usually the chapter name/number
+                 title = lines[0]
+                 // If the second line exists and is a title (not date/views), append it
+                 if (lines.length > 1) {
+                     const secondLine = lines[1]
+                     // fast check to see if second line is a date (contains "ago", "month", "year" or purely numbers)
+                     const isDate = /\d+ (ago|min|hour|day|week|month|year)/i.test(secondLine) || /^\d+$/.test(secondLine.replace(/[,.]/g, ''))
+                     if (!isDate) {
+                        title += ` - ${secondLine}`
+                     }
+                 }
+            }
 
             chapters.push({
                 id: `${mangaId}$${chapterNum}`,
