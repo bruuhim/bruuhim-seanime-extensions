@@ -6,224 +6,246 @@ class Provider {
 
     private async fetch(url: string, opts: RequestInit = {}): Promise<Response> {
         console.log(`[OlympusStaff] Fetching: ${url}`)
-        const resp = await fetch(url, {
-            ...opts,
-            headers: {
-                "User-Agent": this.userAgent,
-                "Referer": this.api + "/",
-                ...opts.headers,
-            }
-        })
-        console.log(`[OlympusStaff] Status: ${resp.status}`)
-        return resp
+        try {
+            const resp = await fetch(url, {
+                ...opts,
+                headers: {
+                    "User-Agent": this.userAgent,
+                    "Referer": this.api + "/",
+                    ...opts.headers,
+                }
+            })
+            console.log(`[OlympusStaff] Status: ${resp.status}`)
+            return resp
+        } catch (e) {
+            console.error(`[OlympusStaff] Fetch error: ${(e as Error).message}`)
+            throw e
+        }
     }
 
     async search({ query }: QueryOptions): Promise<SearchResult[]> {
         console.log(`[OlympusStaff] Searching for: ${query}`)
-        const url = `${this.api}/?s=${encodeURIComponent(query)}`
-        const resp = await this.fetch(url)
-        const html = await resp.text()
-        const $ = LoadDoc(html)
+        try {
+            const url = `${this.api}/?s=${encodeURIComponent(query)}`
+            const resp = await this.fetch(url)
+            const html = await resp.text()
+            const $ = LoadDoc(html)
 
-        const resultsMap = new Map<string, SearchResult>()
+            const resultsMap = new Map<string, SearchResult>()
 
-        // Iterate over likely container elements first
-        $("article, .item, .post-item, .box, .movie-item, .list-item, div[class*='item']").each((i: number, el: any) => {
-             const titleEl = el.find("a").first()
-             if (!titleEl.length) return
-             
-             const href = titleEl.attr("href")
-             if (!href || !href.includes("/series/")) return
+            // Iterate over ALL links that look like a series link
+            $("a").each((i: number, el: any) => {
+                const href = el.attr("href")
+                if (!href || !href.includes("/series/")) return
 
-             // slug
-             const slugMatch = href.match(/\/series\/([^/]+)/)
-             if (!slugMatch) return
-             const slug = slugMatch[1]
-             if (resultsMap.has(slug)) return
+                // slug
+                const slugMatch = href.match(/\/series\/([^/]+)/)
+                if (!slugMatch) return
+                const slug = slugMatch[1]
+                if (resultsMap.has(slug)) return
 
-             // Title
-             let title = el.find("h3, h4, .title, .post-title").text().trim() || titleEl.text().trim()
-             if (!title) return
+                // Avoid chapter links (series/slug/chapter-1)
+                // If it has a number at the end, it MIGHT be a chapter, but some series end with numbers.
+                // Usually chapter links have another segment.
+                // /series/slug is series. /series/slug/chapter is chapter.
+                const segments = href.split("/").filter((s: string) => s.length > 0)
+                // segments: ['https:', '', 'domain', 'series', 'slug'] -> length 5 (if absolute)
+                // or ['series', 'slug'] -> length 2 (if relative)
+                // Safe bet: if it has a 3rd part after series, likely a chapter
+                // Url structure: https://olympustaff.com/series/slug/ => correct
+                // https://olympustaff.com/series/slug/chapter-1 => incorrect
+                
+                // Let's use strict regex for series page
+                // Ends with /series/slug or /series/slug/
+                if (!/\/series\/[^/]+\/?$/.test(href)) {
+                     // check if it's a chapter link
+                     if (/\/series\/[^/]+\/\d+/.test(href)) return 
+                }
 
-             // LOG: Check what we found
-             // console.log(`[OlympusStaff] Found candidate: ${slug} | Title: ${title}`)
+                // Title - prefer the text inside the anchor first
+                let title = el.text().trim()
+                if (!title) {
+                    title = el.find("h3, h4, .title, .post-title").text().trim()
+                }
+                
+                // Fallback: Check parent for title if anchor is wrapping an image only
+                if (!title) {
+                     const container = el.closest("article, .item, .post-item, .box, li")
+                     if (container.length > 0) {
+                         title = container.find("h3, h4, .title, .post-title").text().trim()
+                     }
+                }
 
-             // Fuzzy filter
-             const queryWords = query.toLowerCase().split(" ").filter(w => w.length > 2)
-             const titleLower = title.toLowerCase()
-             const match = queryWords.length === 0 || queryWords.some(w => titleLower.includes(w))
-             
-             if (!match) {
-                // console.log(`[OlympusStaff] Filtered out: ${title}`)
-                return;
-             }
+                if (!title) return 
 
-             // Image
-             const imgEl = el.find("img")
-             
-             // LOG: Image debugging
-             const dataSrc = imgEl.attr("data-src")
-             const src = imgEl.attr("src")
-             const srcset = imgEl.attr("srcset")
-             console.log(`[OlympusStaff] Image match for ${slug}: data-src=${dataSrc}, src=${src}, srcset=${srcset}`)
+                // Filter
+                const queryWords = query.toLowerCase().split(" ").filter(w => w.length > 2)
+                const titleLower = title.toLowerCase()
+                const match = queryWords.length === 0 || queryWords.some(w => titleLower.includes(w))
+                
+                if (!match) return
 
-             let image = dataSrc?.trim() || 
-                           src?.trim() || 
-                           srcset?.split(",")[0]?.split(" ")[0]?.trim() || 
-                           ""
-             
-             if (image && !image.startsWith("http")) {
-                 image = (this.api + image).replace(/([^:]\/)\/+/g, "$1")
-             }
+                // Image finding: Look HARD
+                // 1. Inside anchor
+                let imgEl = el.find("img")
+                // 2. Previous sibling
+                if (imgEl.length === 0) {
+                     imgEl = el.prev().find("img")
+                }
+                // 3. Parent's siblings (common in list views)
+                if (imgEl.length === 0) {
+                     const container = el.closest("article, .item, .post-item, .box, li")
+                     imgEl = container.find("img")
+                }
 
-             resultsMap.set(slug, {
-                 id: slug,
-                 title: title,
-                 image: image
-             })
-        })
-        
-        console.log(`[OlympusStaff] Search found ${resultsMap.size} results`)
-        return Array.from(resultsMap.values())
+                let image = imgEl.attr("data-src")?.trim() || 
+                            imgEl.attr("src")?.trim() || 
+                            imgEl.attr("srcset")?.split(",")[0]?.split(" ")[0]?.trim() || 
+                            ""
+                
+                if (image && !image.startsWith("http")) {
+                    image = (this.api + image).replace(/([^:]\/)\/+/g, "$1")
+                }
+
+                resultsMap.set(slug, {
+                    id: slug,
+                    title: title,
+                    image: image
+                })
+            })
+            
+            console.log(`[OlympusStaff] Search found ${resultsMap.size} results`)
+            return Array.from(resultsMap.values())
+        } catch (e) {
+            console.error(`[OlympusStaff] Search error: ${(e as Error).message}\n${(e as Error).stack}`)
+            return []
+        }
     }
 
     async findChapters(mangaId: string): Promise<ChapterDetails[]> {
         console.log(`[OlympusStaff] Finding chapters for: ${mangaId}`)
-        const url = `${this.api}/series/${mangaId}`
-        const resp = await this.fetch(url)
-        const html = await resp.text()
-        const $ = LoadDoc(html)
+        try {
+            const url = `${this.api}/series/${mangaId}`
+            const resp = await this.fetch(url)
+            const html = await resp.text()
+            const $ = LoadDoc(html)
 
-        const chapters: ChapterDetails[] = []
-        const seenChapters = new Set<string>()
+            const chapters: ChapterDetails[] = []
+            const seenChapters = new Set<string>()
 
-        $("a[href*='/series/" + mangaId + "/']").each((i: number, el: any) => {
-            const href = el.attr("href")
-            if (!href) return
+            $("a[href*='/series/" + mangaId + "/']").each((i: number, el: any) => {
+                const href = el.attr("href")
+                if (!href) return
 
-            const chapterMatch = href.match(/\/series\/[^/]+\/(\d+)/)
-            if (!chapterMatch) return
-            const chapterNum = chapterMatch[1]
+                const chapterMatch = href.match(/\/series\/[^/]+\/(\d+)/)
+                if (!chapterMatch) return
+                const chapterNum = chapterMatch[1]
 
-            if (seenChapters.has(chapterNum)) return
-            seenChapters.add(chapterNum)
+                if (seenChapters.has(chapterNum)) return
+                seenChapters.add(chapterNum)
 
-            // Clean up title: Remove date, views, and numbers
-            let rawText = el.text().trim()
-            // Normalize spaces
-            rawText = rawText.replace(/\s+/g, " ")
-
-            // LOG: Raw title text
-            console.log(`[OlympusStaff] Raw chapter text for #${chapterNum}: "${rawText}"`)
-
-            // Patterns to ignore
-            // 2023, 14 hours ago, 31,673 views, 31.673 
-            const garbagePatterns = [
-                /\d{4}/, // Year
-                /(ago|min|hour|day|week|month|year)/i, // Time relative
-                /[\d,.]+\s*(views|مشاهدة)/i, // View count with label
-                /^\s*[\d,.]+\s*$/, // Just numbers
-                /الفصل\s*\d+/ // "Chapter X" in Arabic (we add generic back later)
-            ]
-
-            // Heuristic strategies to find a real title
-            // 1. Check if the text contains a real title separate from the chapter number
-            let title = ""
-            
-            // Should usually correspond to the line that does NOT match garbage
-            // But since we flattened newlines with Replace, we split by common separators if needed? 
-            // Better: re-fetch text with newlines if possible? 
-            // In Cheerio/HTML, typical newlines might be lost if we just .text() a block with <br> or divs.
-            // Let's assume the site uses <span> or <div> for details.
-            
-            // Let's use the provided text but filter parts
-            const parts = rawText.split(/[\n\t•]+/) // split by bullets or newlines if preserved
-            
-            for (const part of parts) {
-                const p = part.trim()
-                if (p.length < 2) continue
+                // Clean up title
+                let rawText = el.text().trim()
+                rawText = rawText.replace(/\s+/g, " ")
                 
-                let isGarbage = false
-                for (const pattern of garbagePatterns) {
-                    if (pattern.test(p)) {
-                        isGarbage = true
-                        break
+                console.log(`[OlympusStaff] Raw text for ch ${chapterNum}: "${rawText}"`)
+
+                const garbagePatterns = [
+                    /\d{4}/, 
+                    /(ago|min|hour|day|week|month|year)/i, 
+                    /[\d,.]+\s*(views|مشاهدة)/i, 
+                    /^\s*[\d,.]+\s*$/, 
+                    /الفصل\s*\d+/ 
+                ]
+                
+                let titleParts: string[] = []
+                const parts = rawText.split(/[\n\t•]+/) 
+                
+                for (const part of parts) {
+                    const p = part.trim()
+                    if (p.length < 2) continue
+                    
+                    let isGarbage = false
+                    for (const pattern of garbagePatterns) {
+                        if (pattern.test(p)) {
+                            isGarbage = true
+                            break
+                        }
+                    }
+                    if (!isGarbage && !p.includes(chapterNum)) {
+                        titleParts.push(p)
                     }
                 }
-                
-                if (!isGarbage && !p.includes(chapterNum)) {
-                    console.log(`[OlympusStaff] Accepted part: "${p}"`)
-                    title = p
-                    break
-                } else {
-                    console.log(`[OlympusStaff] Rejected part: "${p}"`)
+
+                let title = `Chapter ${chapterNum}`
+                if (titleParts.length > 0) {
+                     title += ` - ${titleParts.join(" ")}`
                 }
-            }
 
-            // Fallback: Default to "Chapter X"
-            if (!title) {
-                 title = `Chapter ${chapterNum}`
-            } else {
-                 // If we found a title, format it nice
-                 title = `Chapter ${chapterNum} - ${title}`
-            }
-
-            chapters.push({
-                id: `${mangaId}$${chapterNum}`,
-                url: href,
-                title: title,
-                chapter: chapterNum,
-                index: 0
+                chapters.push({
+                    id: `${mangaId}$${chapterNum}`,
+                    url: href,
+                    title: title,
+                    chapter: chapterNum,
+                    index: 0
+                })
             })
-        })
 
-        // Sort by chapter number descending
-        chapters.sort((a, b) => parseInt(b.chapter) - parseInt(a.chapter))
-        chapters.forEach((chapter, index) => {
-            chapter.index = index
-        })
+            chapters.sort((a, b) => parseInt(b.chapter) - parseInt(a.chapter))
+            chapters.forEach((chapter, index) => {
+                chapter.index = index
+            })
 
-        return chapters
+            console.log(`[OlympusStaff] Found ${chapters.length} chapters`)
+            return chapters
+        } catch (e) {
+            console.error(`[OlympusStaff] findChapters error: ${(e as Error).message}\n${(e as Error).stack}`)
+            return []
+        }
     }
 
     async findChapterPages(chapterId: string): Promise<ChapterPage[]> {
-        const [mangaId, chapterNum] = chapterId.split("$")
-        const url = `${this.api}/series/${mangaId}/${chapterNum}`
-        const resp = await this.fetch(url)
-        const html = await resp.text()
-        const $ = LoadDoc(html)
+        console.log(`[OlympusStaff] Finding pages for chapter: ${chapterId}`)
+        try {
+            const [mangaId, chapterNum] = chapterId.split("$")
+            const url = `${this.api}/series/${mangaId}/${chapterNum}`
+            const resp = await this.fetch(url)
+            const html = await resp.text()
+            const $ = LoadDoc(html)
 
-        const pages: ChapterPage[] = []
+            const pages: ChapterPage[] = []
 
-        // Try reading content container first details
-        let images = $(".chapter-content img, .reading-content img, .page-break img")
-        
-        // Fallback for some madara themes
-        if (images.length === 0) {
-            images = $("img[class*='wp-manga-chapter-img']")
-        }
+            let images = $(".chapter-content img, .reading-content img, .page-break img")
+            if (images.length === 0) {
+                images = $("img[class*='wp-manga-chapter-img']")
+            }
 
-        images.each((i: number, el: any) => {
-            let src = el.attr("data-src")?.trim() || 
-                        el.attr("src")?.trim() ||
-                        el.attr("data-lazy-src")?.trim()
+            images.each((i: number, el: any) => {
+                let src = el.attr("data-src")?.trim() || 
+                            el.attr("src")?.trim() ||
+                            el.attr("data-lazy-src")?.trim()
+                
+                if (src && !src.startsWith("http")) {
+                    src = (this.api + src).replace(/([^:]\/)\/+/g, "$1")
+                }
+
+                if (src && !src.includes("logo") && !src.includes("icon")) {
+                    pages.push({
+                        url: src,
+                        index: i,
+                        headers: {
+                            "Referer": this.api + "/"
+                        }
+                    })
+                }
+            })
             
-            if (src && !src.startsWith("http")) {
-                src = (this.api + src).replace(/([^:]\/)\/+/g, "$1")
-            }
-
-            if (src && !src.includes("logo") && !src.includes("icon")) {
-                pages.push({
-                    url: src,
-                    index: i,
-                    headers: {
-                        "Referer": this.api + "/"
-                    }
-                })
-            }
-        })
-
-        return pages
+            console.log(`[OlympusStaff] Found ${pages.length} pages`)
+            return pages
+        } catch (e) {
+            console.error(`[OlympusStaff] findChapterPages error: ${(e as Error).message}`)
+            return []
+        }
     }
 
     getSettings(): Settings {
