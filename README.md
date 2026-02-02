@@ -25,10 +25,10 @@
 
 These providers are optimized for stability, featuring AJAX fallbacks and Cloudflare bypass logic.
 
-| Provider              | Description                         | Installation Manifest (URL)                                                                                        |
-| :-------------------- | :---------------------------------- | :----------------------------------------------------------------------------------------------------------------- |
-| **3asq (Arabic)**     | Premium Arabic manga from 3asq.org  | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/manga-providers/3asq/3asq.json`         |
-| **LekManga (Arabic)** | Extensive library from lekmanga.net | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/manga-providers/lekmanga/lekmanga.json` |
+| Provider                  | Description                            | Installation Manifest (URL)                                                                                              |
+| :------------------------ | :------------------------------------- | :----------------------------------------------------------------------------------------------------------------------- |
+| **3asq (Arabic)**         | Premium Arabic manga from 3asq.org     | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/manga-providers/3asq/3asq.json`               |
+| **OlympusStaff (Arabic)** | Extensive library from olympustaff.com | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/manga-providers/olympustaff/olympustaff.json` |
 
 <br />
 

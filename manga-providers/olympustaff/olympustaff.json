@@ -1,0 +1,13 @@
+{
+  "id": "al-olympustaff",
+  "name": "OlympusStaff",
+  "version": "1.0.0",
+  "author": "Bruuhim",
+  "description": "Manga provider for olympustaff.com (Arabic)",
+  "type": "manga-provider",
+  "language": "typescript",
+  "lang": "ar",
+  "icon": "https://i.imgur.com/eGnWnzc.jpeg",
+  "payloadURI": "https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/manga-providers/olympustaff/index.ts",
+  "manifestURI": "https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/manga-providers/olympustaff/olympustaff.json"
+}
