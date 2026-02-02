@@ -6,7 +6,7 @@
   "description": "Manga provider for lekmanga.net (Arabic)",
   "type": "manga-provider",
   "language": "typescript",
-  "lang": "en",
+  "lang": "ar",
   "icon": "https://lekmanga.net/wp-content/uploads/2023/02/cropped-favicon-32x32.png",
   "payloadURI": "https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/manga-providers/lekmanga/index.ts",
   "manifestURI": "https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/manga-providers/lekmanga/lekmanga.json"

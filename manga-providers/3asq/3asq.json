@@ -6,7 +6,7 @@
   "description": "Manga provider for 3asq.org",
   "type": "manga-provider",
   "language": "typescript",
-  "lang": "en",
+  "lang": "ar",
   "icon": "https://3asq.org/wp-content/uploads/2021/08/cropped-favicon-32x32.png",
   "payloadURI": "https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/manga-providers/3asq/index.ts",
   "manifestURI": "https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/manga-providers/3asq/3asq.json"
