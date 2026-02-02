@@ -5,7 +5,6 @@ class Provider {
     private userAgent: string = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
 
     private async fetch(url: string, opts: RequestInit = {}): Promise<Response> {
-        console.log(`[OlympusStaff] Fetching: ${url}`)
         const resp = await fetch(url, {
             ...opts,
             headers: {
@@ -14,12 +13,10 @@ class Provider {
                 ...opts.headers,
             }
         })
-        console.log(`[OlympusStaff] Status: ${resp.status}`)
         return resp
     }
 
     async search({ query }: QueryOptions): Promise<SearchResult[]> {
-        console.log(`[OlympusStaff] Searching for: ${query}`)
         const url = `${this.api}/?s=${encodeURIComponent(query)}`
         const resp = await this.fetch(url)
         const html = await resp.text()
@@ -76,18 +73,17 @@ class Provider {
             })
         })
 
-        console.log(`[OlympusStaff] Found ${resultsMap.size} unique results`)
         return Array.from(resultsMap.values())
     }
 
     async findChapters(mangaId: string): Promise<ChapterDetails[]> {
-        console.log(`[OlympusStaff] Finding chapters for: ${mangaId}`)
         const url = `${this.api}/series/${mangaId}`
         const resp = await this.fetch(url)
         const html = await resp.text()
         const $ = LoadDoc(html)
 
         const chapters: ChapterDetails[] = []
+        const seenChapters = new Set<string>()
 
         $("a[href*='/series/" + mangaId + "/']").each((i: number, el: any) => {
             const href = el.attr("href")
@@ -97,27 +93,25 @@ class Provider {
             if (!chapterMatch) return
             const chapterNum = chapterMatch[1]
 
-            // Clean up title: text often contains date, views, etc.
-            // Split by newline and take the first few lines that aren't dates/numbers
+            if (seenChapters.has(chapterNum)) return
+            seenChapters.add(chapterNum)
+
+            // Clean up title: Remove date, views, and numbers
             let rawText = el.text().trim()
-            
-            // Remove typical metadata patterns if they exist in the text block
-            // Often format is: "Chapter X \n Title \n Date"
             const lines = rawText.split(/[\n\r]+/).map((l: string) => l.trim()).filter((l: string) => l.length > 0)
             
             let title = `Chapter ${chapterNum}`
-            if (lines.length > 0) {
-                 // The first line is usually the chapter name/number
-                 title = lines[0]
-                 // If the second line exists and is a title (not date/views), append it
-                 if (lines.length > 1) {
-                     const secondLine = lines[1]
-                     // fast check to see if second line is a date (contains "ago", "month", "year" or purely numbers)
-                     const isDate = /\d+ (ago|min|hour|day|week|month|year)/i.test(secondLine) || /^\d+$/.test(secondLine.replace(/[,.]/g, ''))
-                     if (!isDate) {
-                        title += ` - ${secondLine}`
-                     }
-                 }
+            
+            // Heuristic: Check lines for actual content that isn't just numbers or dates
+            for (const line of lines) {
+                const isDate = /\d+ (ago|min|hour|day|week|month|year)/i.test(line)
+                const isViewCount = /^\d[\d,.]*$/.test(line) // e.g. "31,673" or "387"
+                const isChapterNum = line.includes(chapterNum) || line.includes("الفصل")
+
+                if (!isDate && !isViewCount && !isChapterNum) {
+                     title = line
+                     break 
+                }
             }
 
             chapters.push({
@@ -135,12 +129,10 @@ class Provider {
             chapter.index = index
         })
 
-        console.log(`[OlympusStaff] Found ${chapters.length} chapters`)
         return chapters
     }
 
     async findChapterPages(chapterId: string): Promise<ChapterPage[]> {
-        console.log(`[OlympusStaff] Finding pages for chapter: ${chapterId}`)
         const [mangaId, chapterNum] = chapterId.split("$")
         const url = `${this.api}/series/${mangaId}/${chapterNum}`
         const resp = await this.fetch(url)
@@ -150,8 +142,13 @@ class Provider {
         const pages: ChapterPage[] = []
 
         $(".chapter-content img, .reading-content img, .page-break img").each((i: number, el: any) => {
-            const src = el.attr("data-src")?.trim() || 
+            let src = el.attr("data-src")?.trim() || 
                         el.attr("src")?.trim()
+            
+            if (src && !src.startsWith("http")) {
+                src = (this.api + src).replace(/([^:]\/)\/+/g, "$1")
+            }
+
             if (src && !src.includes("logo") && !src.includes("icon")) {
                 pages.push({
                     url: src,
@@ -163,7 +160,6 @@ class Provider {
             }
         })
 
-        console.log(`[OlympusStaff] Found ${pages.length} pages`)
         return pages
     }
 
