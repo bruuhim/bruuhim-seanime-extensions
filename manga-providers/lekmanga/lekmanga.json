@@ -7,7 +7,7 @@
   "type": "manga-provider",
   "language": "typescript",
   "lang": "ar",
-  "icon": "https://lekmanga.net/wp-content/uploads/2021/04/lme-logo-1.png",
+  "icon": "https://img.utdstc.com/icon/4a6/4a62563607217036262426367253507_1.png",
   "payloadURI": "https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/manga-providers/lekmanga/index.ts",
   "manifestURI": "https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/manga-providers/lekmanga/lekmanga.json"
 }
