@@ -28,6 +28,7 @@ These providers are optimized for stability, featuring AJAX fallbacks and Cloudf
 | Provider                  | Description                            | Installation Manifest (URL)                                                                                              |
 | :------------------------ | :------------------------------------- | :----------------------------------------------------------------------------------------------------------------------- |
 | **3asq (Arabic)**         | Premium Arabic manga from 3asq.org     | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/manga-providers/3asq/3asq.json`               |
+| **AzoraMoon (Arabic)**    | Fast Arabic manga from azoramoon.com   | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/manga-providers/azoramoon/azoramoon.json`     |
 | **OlympusStaff (Arabic)** | Extensive library from olympustaff.com | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/manga-providers/olympustaff/olympustaff.json` |
 
 <br />

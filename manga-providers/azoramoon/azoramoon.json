@@ -1,0 +1,13 @@
+{
+  "id": "al-azoramoon",
+  "name": "AzoraMoon",
+  "version": "1.0.0",
+  "author": "Bruuhim",
+  "description": "Manga provider for azoramoon.com (Arabic)",
+  "type": "manga-provider",
+  "language": "typescript",
+  "lang": "ar",
+  "icon": "https://azoramoon.com/logo-v2.png",
+  "payloadURI": "https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/manga-providers/azoramoon/index.ts",
+  "manifestURI": "https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/manga-providers/azoramoon/azoramoon.json"
+}
