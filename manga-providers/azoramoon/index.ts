@@ -6,9 +6,8 @@ class Provider {
     private userAgent: string = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
 
     private async fetch(url: string, opts: RequestInit = {}): Promise<Response> {
-        console.log(`[AzoraMoon] Fetching: ${url}`)
         try {
-            const resp = await fetch(url, {
+            return await fetch(url, {
                 ...opts,
                 headers: {
                     "User-Agent": this.userAgent,
@@ -16,27 +15,20 @@ class Provider {
                     ...opts.headers,
                 }
             })
-            console.log(`[AzoraMoon] Response Status: ${resp.status} for ${url}`)
-            return resp
         } catch (e) {
-            console.error(`[AzoraMoon] Fetch Error for ${url}:`, e)
             throw e
         }
     }
 
     async search({ query }: QueryOptions): Promise<SearchResult[]> {
-        console.log(`[AzoraMoon] Search Query: "${query}"`)
         try {
             const url = `${this.apiUrl}/query?searchTerm=${encodeURIComponent(query)}&perPage=20`
             const resp = await this.fetch(url)
             const data = await resp.json()
 
             if (!data || !data.posts) {
-                console.warn(`[AzoraMoon] No posts found for query: "${query}"`)
                 return []
             }
-
-            console.log(`[AzoraMoon] Found ${data.posts.length} results`)
 
             return data.posts.map((post: any) => {
                 const synonyms = post.alternativeTitles 
@@ -46,7 +38,6 @@ class Provider {
                 const year = post.createdAt ? new Date(post.createdAt).getFullYear() : undefined
 
                 return {
-                    // ID format: ID|Slug to be used in findChapters
                     id: `${post.id}|${post.slug}`,
                     title: post.postTitle,
                     image: post.featuredImage || "",
@@ -55,82 +46,55 @@ class Provider {
                 }
             })
         } catch (e) {
-            console.error("[AzoraMoon] search error:", e)
             return []
         }
     }
 
     async findChapters(mangaId: string): Promise<ChapterDetails[]> {
-        console.log(`[AzoraMoon] findChapters for: "${mangaId}"`)
         try {
-            let numericId: string | null = null
             let mangaSlug: string | null = null
 
-            // Support both new "ID|Slug" and old "Slug" format
             if (mangaId.includes("|")) {
-                const parts = mangaId.split("|")
-                numericId = parts[0]
-                mangaSlug = parts[1]
-                console.log(`[AzoraMoon] Parsed ID: ${numericId}, Slug: ${mangaSlug}`)
+                mangaSlug = mangaId.split("|")[1]
             } else {
                 mangaSlug = mangaId
-                console.log(`[AzoraMoon] Slug provided: ${mangaSlug}. Attempting to resolve numeric ID...`)
-                // Try to find the numeric ID by searching for the slug (as words)
-                const queryTitle = mangaSlug.replace(/-/g, " ")
-                const searchResp = await this.fetch(`${this.apiUrl}/query?searchTerm=${encodeURIComponent(queryTitle)}`)
-                const searchData = await searchResp.json()
-                const post = searchData?.posts?.find((p: any) => p.slug === mangaSlug)
-                if (post) {
-                    numericId = post.id.toString()
-                    console.log(`[AzoraMoon] Resolved numeric ID: ${numericId}`)
-                }
             }
 
-            if (!numericId) {
-                console.error(`[AzoraMoon] Could not resolve numeric ID for: "${mangaId}"`)
-                return []
-            }
+            if (!mangaSlug) return []
 
-            const url = `${this.apiUrl}/chapters?postId=${numericId}`
+            const url = `${this.api}/series/${mangaSlug}`
             const resp = await this.fetch(url)
-            const chaptersData = await resp.json()
-
-            // The API returns { post: { chapters: [] }, totalChapterCount: ... }
-            const rawChapters = chaptersData.post?.chapters || (Array.isArray(chaptersData) ? chaptersData : [])
-
-            if (!rawChapters || rawChapters.length === 0) {
-                console.warn(`[AzoraMoon] No chapters found for ID: ${numericId}`)
-                return []
-            }
-
-            console.log(`[AzoraMoon] Total chapters found in API for ID ${numericId}: ${rawChapters.length}`)
+            const html = await resp.text()
+            const $ = LoadDoc(html)
 
             const chapters: ChapterDetails[] = []
-            
-            rawChapters.forEach((ch: any) => {
-                // isLocked: true means requires payment or timer
-                // unlockAt: if present and in future, it's locked
-                const isLocked = ch.isLocked || (ch.unlockAt && new Date(ch.unlockAt) > new Date())
-                
-                if (isLocked) {
-                    return
-                }
+            const seenSlugs = new Set<string>()
 
-                // If we don't have mangaSlug yet (rare), try to get it from the chapter info
-                if (!mangaSlug && ch.mangaPost && ch.mangaPost.slug) {
-                    mangaSlug = ch.mangaPost.slug
-                }
+            // Find all chapter links on the series page
+            // AzoraMoon uses standard links for chapters in its SSR/DOM
+            $("a").each((i: number, el: any) => {
+                const href = el.attr("href")
+                if (!href || !href.includes("/series/" + mangaSlug + "/")) return
+
+                const chapterSlugMatch = href.match(/\/series\/[^/]+\/([^/]+)\/?$/)
+                if (!chapterSlugMatch) return
+                const chapterSlug = chapterSlugMatch[1]
+
+                if (seenSlugs.has(chapterSlug)) return
+                seenSlugs.add(chapterSlug)
+
+                // Extract chapter number from slug
+                const numMatch = chapterSlug.match(/chapter-(\d+(?:\.\d+)?)/)
+                const number = numMatch ? numMatch[1] : chapterSlug.replace("chapter-", "")
 
                 chapters.push({
-                    id: `${mangaSlug}$${ch.slug}`,
-                    url: `${this.api}/series/${mangaSlug}/${ch.slug}`,
-                    title: ch.title || `الفصل ${ch.number}`,
-                    chapter: ch.number.toString(),
+                    id: `${mangaSlug}$${chapterSlug}`,
+                    url: (href.startsWith("http") ? href : this.api + href).replace(/([^:]\/)\/+/g, "$1"),
+                    title: `الفصل ${number}`,
+                    chapter: number,
                     index: 0
                 })
             })
-
-            console.log(`[AzoraMoon] Free chapters available: ${chapters.length}`)
 
             // Sort ascending by chapter number
             chapters.sort((a, b) => parseFloat(a.chapter) - parseFloat(b.chapter))
@@ -141,23 +105,20 @@ class Provider {
 
             return chapters
         } catch (e) {
-            console.error("[AzoraMoon] findChapters error:", e)
             return []
         }
     }
 
     async findChapterPages(chapterId: string): Promise<ChapterPage[]> {
-        console.log(`[AzoraMoon] findChapterPages for: "${chapterId}"`)
         try {
             const [mangaSlug, chapterSlug] = chapterId.split("$")
             const url = `${this.api}/series/${mangaSlug}/${chapterSlug}`
             const resp = await this.fetch(url)
             const html = await resp.text()
+            
             const pages: ChapterPage[] = []
 
-            // Extract images using regex from the whole HTML source
-            // This is more robust as AzoraMoon uses Next.js App Router with RSC/push calls
-            // where images might not be in the initial DOM or are lazy-loaded without data-src.
+            // Robust regex extraction for Next.js App Router RSC data
             const imgRegex = /https:\/\/storage\.azoramoon\.com\/WP-manga\/data\/[^\s"']+\.(?:webp|jpg|png|jpeg)/gi
             const matches = html.match(imgRegex)
             
@@ -174,8 +135,8 @@ class Provider {
                 })
             }
 
+            // Fallback to DOM if regex fails (e.g. if structure changes slightly)
             if (pages.length === 0) {
-                console.warn("[AzoraMoon] Regex extraction failed, falling back to DOM parsing")
                 const $ = LoadDoc(html)
                 const images = $(".comic-images-wrapper img")
                 
@@ -198,10 +159,8 @@ class Provider {
                 })
             }
 
-            console.log(`[AzoraMoon] Extracted ${pages.length} pages`)
             return pages
         } catch (e) {
-            console.error("[AzoraMoon] findChapterPages error:", e)
             return []
         }
     }
