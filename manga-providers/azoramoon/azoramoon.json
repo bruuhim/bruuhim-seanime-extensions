@@ -1,7 +1,7 @@
 {
   "id": "al-azoramoon",
   "name": "AzoraMoon",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "author": "Bruuhim",
   "description": "Manga provider for azoramoon.com (Arabic)",
   "type": "manga-provider",

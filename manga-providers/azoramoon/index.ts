@@ -39,7 +39,6 @@ class Provider {
             console.log(`[AzoraMoon] Found ${data.posts.length} results`)
 
             return data.posts.map((post: any) => {
-                // Map alternativeTitles to synonyms for better matching in Seanime
                 const synonyms = post.alternativeTitles 
                     ? post.alternativeTitles.split(/[\s\t]+/).filter((s: string) => s.length > 2)
                     : []
@@ -47,7 +46,8 @@ class Provider {
                 const year = post.createdAt ? new Date(post.createdAt).getFullYear() : undefined
 
                 return {
-                    id: post.slug,
+                    // ID format: ID|Slug to be used in findChapters
+                    id: `${post.id}|${post.slug}`,
                     title: post.postTitle,
                     image: post.featuredImage || "",
                     synonyms: synonyms,
@@ -61,59 +61,79 @@ class Provider {
     }
 
     async findChapters(mangaId: string): Promise<ChapterDetails[]> {
-        console.log(`[AzoraMoon] Fetching chapters for MangaID (Slug): "${mangaId}"`)
+        console.log(`[AzoraMoon] findChapters for: "${mangaId}"`)
         try {
-            // Using searchTerm with the exact slug is usually very reliable on this API
-            const url = `${this.apiUrl}/query?searchTerm=${encodeURIComponent(mangaId)}`
+            let numericId: string | null = null
+            let mangaSlug: string | null = null
+
+            // Support both new "ID|Slug" and old "Slug" format
+            if (mangaId.includes("|")) {
+                const parts = mangaId.split("|")
+                numericId = parts[0]
+                mangaSlug = parts[1]
+                console.log(`[AzoraMoon] Parsed ID: ${numericId}, Slug: ${mangaSlug}`)
+            } else {
+                mangaSlug = mangaId
+                console.log(`[AzoraMoon] Slug provided: ${mangaSlug}. Attempting to resolve numeric ID...`)
+                // Try to find the numeric ID by searching for the slug (as words)
+                const queryTitle = mangaSlug.replace(/-/g, " ")
+                const searchResp = await this.fetch(`${this.apiUrl}/query?searchTerm=${encodeURIComponent(queryTitle)}`)
+                const searchData = await searchResp.json()
+                const post = searchData?.posts?.find((p: any) => p.slug === mangaSlug)
+                if (post) {
+                    numericId = post.id.toString()
+                    console.log(`[AzoraMoon] Resolved numeric ID: ${numericId}`)
+                }
+            }
+
+            if (!numericId) {
+                console.error(`[AzoraMoon] Could not resolve numeric ID for: "${mangaId}"`)
+                return []
+            }
+
+            const url = `${this.apiUrl}/chapters?postId=${numericId}`
             const resp = await this.fetch(url)
-            const data = await resp.json()
+            const chaptersData = await resp.json()
 
-            if (!data || !data.posts) {
-                console.warn(`[AzoraMoon] No post found for MangaID: "${mangaId}"`)
+            // api/chapters seems to return an array directly or { chapters: [] }
+            // Let's handle both based on subagent results which showed an array in Step 299
+            const rawChapters = Array.isArray(chaptersData) ? chaptersData : chaptersData.chapters
+
+            if (!rawChapters) {
+                console.warn(`[AzoraMoon] No chapters found for ID: ${numericId}`)
                 return []
             }
 
-            const post = data.posts.find((p: any) => p.slug === mangaId)
-            if (!post) {
-                console.warn(`[AzoraMoon] Could not find exact matching slug for: "${mangaId}" in results`)
-                return []
-            }
-
-            if (!post.chapters) {
-                console.warn(`[AzoraMoon] No chapters array found for: "${mangaId}"`)
-                return []
-            }
-
-            console.log(`[AzoraMoon] Total chapters found in API for "${mangaId}": ${post.chapters.length}`)
+            console.log(`[AzoraMoon] Total chapters found in API for ID ${numericId}: ${rawChapters.length}`)
 
             const chapters: ChapterDetails[] = []
             
-            post.chapters.forEach((ch: any) => {
-                // Skip locked chapters
+            rawChapters.forEach((ch: any) => {
                 // isLocked: true means requires payment or timer
-                // unlockAt: if present, usually means it's locked until then
+                // unlockAt: if present and in future, it's locked
                 const isLocked = ch.isLocked || (ch.unlockAt && new Date(ch.unlockAt) > new Date())
                 
                 if (isLocked) {
-                    // console.log(`[AzoraMoon] Skipping locked chapter: ${ch.number}`)
                     return
                 }
 
+                // If we don't have mangaSlug yet (rare), try to get it from the chapter info
+                if (!mangaSlug && ch.mangaPost && ch.mangaPost.slug) {
+                    mangaSlug = ch.mangaPost.slug
+                }
+
                 chapters.push({
-                    id: `${mangaId}$${ch.slug}`,
-                    url: `${this.api}/series/${mangaId}/${ch.slug}`,
-                    title: `الفصل ${ch.number}`,
+                    id: `${mangaSlug}$${ch.slug}`,
+                    url: `${this.api}/series/${mangaSlug}/${ch.slug}`,
+                    title: ch.title || `الفصل ${ch.number}`,
                     chapter: ch.number.toString(),
                     index: 0
                 })
             })
 
-            console.log(`[AzoraMoon] Free chapters available after filtering: ${chapters.length}`)
+            console.log(`[AzoraMoon] Free chapters available: ${chapters.length}`)
 
-            // Sort chapters by number descending (provider expectations vary, but descending is common for UI)
-            // Note: Some systems expect ascending. If Seanime expects ascending, we should reverse.
-            // Based on example: "The chapters should be sorted in ascending order (0, 1, ...)"
-            // So we sort ascending by chapter number.
+            // Sort ascending by chapter number
             chapters.sort((a, b) => parseFloat(a.chapter) - parseFloat(b.chapter))
             
             chapters.forEach((chapter, index) => {
@@ -128,10 +148,10 @@ class Provider {
     }
 
     async findChapterPages(chapterId: string): Promise<ChapterPage[]> {
-        console.log(`[AzoraMoon] Fetching pages for ChapterID: "${chapterId}"`)
+        console.log(`[AzoraMoon] findChapterPages for: "${chapterId}"`)
         try {
-            const [mangaId, chapterSlug] = chapterId.split("$")
-            const url = `${this.api}/series/${mangaId}/${chapterSlug}`
+            const [mangaSlug, chapterSlug] = chapterId.split("$")
+            const url = `${this.api}/series/${mangaSlug}/${chapterSlug}`
             const resp = await this.fetch(url)
             const html = await resp.text()
             const $ = LoadDoc(html)
@@ -139,8 +159,6 @@ class Provider {
             const pages: ChapterPage[] = []
             const images = $(".comic-images-wrapper img")
             
-            console.log(`[AzoraMoon] Found ${images.length} potential images in HTML`)
-
             images.each((i: number, el: any) => {
                 let src = el.attr("src") || el.attr("data-src") || el.attr("data-lazy-src")
                 if (src) {
@@ -159,7 +177,7 @@ class Provider {
                 }
             })
 
-            console.log(`[AzoraMoon] Successfully extracted ${pages.length} pages`)
+            console.log(`[AzoraMoon] Extracted ${pages.length} pages`)
             return pages
         } catch (e) {
             console.error("[AzoraMoon] findChapterPages error:", e)
