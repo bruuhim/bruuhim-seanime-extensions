@@ -7,7 +7,7 @@
   "type": "manga-provider",
   "language": "typescript",
   "lang": "ar",
-  "icon": "https://azoramoon.com/logo-v2.png",
+  "icon": "https://azoramoon.com/icon-512x512.png",
   "payloadURI": "https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/manga-providers/azoramoon/index.ts",
   "manifestURI": "https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/manga-providers/azoramoon/azoramoon.json"
 }
