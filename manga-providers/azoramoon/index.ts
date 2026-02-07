@@ -95,11 +95,10 @@ class Provider {
             const resp = await this.fetch(url)
             const chaptersData = await resp.json()
 
-            // api/chapters seems to return an array directly or { chapters: [] }
-            // Let's handle both based on subagent results which showed an array in Step 299
-            const rawChapters = Array.isArray(chaptersData) ? chaptersData : chaptersData.chapters
+            // The API returns { post: { chapters: [] }, totalChapterCount: ... }
+            const rawChapters = chaptersData.post?.chapters || (Array.isArray(chaptersData) ? chaptersData : [])
 
-            if (!rawChapters) {
+            if (!rawChapters || rawChapters.length === 0) {
                 console.warn(`[AzoraMoon] No chapters found for ID: ${numericId}`)
                 return []
             }
@@ -154,28 +153,50 @@ class Provider {
             const url = `${this.api}/series/${mangaSlug}/${chapterSlug}`
             const resp = await this.fetch(url)
             const html = await resp.text()
-            const $ = LoadDoc(html)
-
             const pages: ChapterPage[] = []
-            const images = $(".comic-images-wrapper img")
+
+            // Extract images using regex from the whole HTML source
+            // This is more robust as AzoraMoon uses Next.js App Router with RSC/push calls
+            // where images might not be in the initial DOM or are lazy-loaded without data-src.
+            const imgRegex = /https:\/\/storage\.azoramoon\.com\/WP-manga\/data\/[^\s"']+\.(?:webp|jpg|png|jpeg)/gi
+            const matches = html.match(imgRegex)
             
-            images.each((i: number, el: any) => {
-                let src = el.attr("src") || el.attr("data-src") || el.attr("data-lazy-src")
-                if (src) {
-                    src = src.trim()
-                    if (!src.startsWith("http")) {
-                        src = (this.api + (src.startsWith("/") ? "" : "/") + src).replace(/([^:]\/)\/+/g, "$1")
-                    }
-                    
+            if (matches && matches.length > 0) {
+                const uniqueImages = [...new Set(matches)]
+                uniqueImages.forEach((url, i) => {
                     pages.push({
-                        url: src,
+                        url: url,
                         index: i,
                         headers: {
                             "Referer": this.api + "/"
                         }
                     })
-                }
-            })
+                })
+            }
+
+            if (pages.length === 0) {
+                console.warn("[AzoraMoon] Regex extraction failed, falling back to DOM parsing")
+                const $ = LoadDoc(html)
+                const images = $(".comic-images-wrapper img")
+                
+                images.each((i: number, el: any) => {
+                    let src = el.attr("src") || el.attr("data-src") || el.attr("data-lazy-src")
+                    if (src) {
+                        src = src.trim()
+                        if (!src.startsWith("http")) {
+                            src = (this.api + (src.startsWith("/") ? "" : "/") + src).replace(/([^:]\/)\/+/g, "$1")
+                        }
+                        
+                        pages.push({
+                            url: src,
+                            index: i,
+                            headers: {
+                                "Referer": this.api + "/"
+                            }
+                        })
+                    }
+                })
+            }
 
             console.log(`[AzoraMoon] Extracted ${pages.length} pages`)
             return pages
