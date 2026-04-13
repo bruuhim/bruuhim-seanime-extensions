@@ -1,12 +1,11 @@
 <div align="center">
-  <img src="https://raw.githubusercontent.com/5rahim/seanime/main/assets/banner.png" width="800" alt="Seanime Banner">
   <h1>🚀 Bruuhim's Seanime Extensions</h1>
-  <p>A collection of high-quality extensions and manga providers for the <b>Seanime</b> universe, including a public, no-auth nekoBT provider.</p>
+  <p>A collection of high-quality extensions and manga providers for the <b>Seanime</b> universe.</p>
 
   <a href="https://github.com/5rahim/seanime">
     <img src="https://img.shields.io/badge/Powered%20by-Seanime-blue?style=for-the-badge&logo=github" alt="Powered by Seanime">
   </a>
-  <img src="https://img.shields.io/badge/Version-1.0.0-gold?style=for-the-badge" alt="Version">
+  <img src="https://img.shields.io/badge/Version-1.1.0-gold?style=for-the-badge" alt="Version">
   <img src="https://img.shields.io/badge/Language-Arabic/English-green?style=for-the-badge" alt="Language">
 </div>
 
@@ -14,12 +13,26 @@
 
 ## 📖 Table of Contents
 
+- [Torrent Providers](#-torrent-providers)
 - [Manga Providers](#-manga-providers)
 - [Featured Extensions](#-featured-extensions)
 - [Installation Guide](#-installation-guide)
 - [Technical Details](#-technical-details)
 
 <hr />
+
+## ⚡ Torrent Providers
+
+| Provider                  | Description                            | Installation Manifest (URL)                                                                                              |
+| :------------------------ | :------------------------------------- | :----------------------------------------------------------------------------------------------------------------------- |
+| **nekoBT (Public)**       | Robust, no-auth nekoBT provider.      | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/anime-torrent-providers/nekobt/nekobt.json`     |
+
+### nekoBT Highlights
+- **Zero Setup**: No API key or account required. Works out of the box.
+- **Smart Fallback**: Layered search strategies (Exact -> Alt Titles -> Broad) to minimize empty results.
+- **Reliable Extraction**: Advanced client-side filtering for episode matching.
+
+<br />
 
 ## 🔌 Manga Providers
 
@@ -62,19 +75,18 @@ Seamlessly adds a native-feeling "Watch on Seanime" button directly into the MyA
 4. In the **External Manifest URL** field, paste the link.
 5. Click **Install**.
 
-_Note: For browser extensions (Open-in-Seanime/MAL-Button), please follow the specific instructions on their respective repository pages._
-
 <br />
 
 ## ⚙️ Configuration
 
-No configuration required. Works out of the box — no account or API key needed.
+- **nekoBT**: No configuration required. 
+- **Manga Providers**: Generally no configuration required unless specified.
 
 ## ⚙️ Technical Details
 
-- **Dual-Method Chapter Extraction**: Combines Static Site Rendering (SSR) and AJAX calls for 99% reliability on Madara/WordPress sites.
-- **Dynamic Header Spoofing**: Built-in User-Agent rotation and Referer management to handle Cloudflare-protected sites like LekManga.
-- **Lazy Load Awareness**: Correctly parses `data-src` attributes to ensure zero missing pages in the reader.
+- **Multi-Strategy Waterfall**: (Torrent) Tries up to 10+ query variants per smart search to ensure matches.
+- **Dual-Method Chapter Extraction**: (Manga) Combines Static Site Rendering (SSR) and AJAX calls for 99% reliability.
+- **Dynamic Header Spoofing**: Built-in User-Agent rotation and Referer management.
 
 ---
 

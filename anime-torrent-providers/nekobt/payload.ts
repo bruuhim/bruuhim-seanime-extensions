@@ -102,15 +102,17 @@ class Provider {
             const epNum = isBatch ? undefined : opts.episodeNumber
             
             console.log(`nekoBT: Smart searching (batch: ${isBatch}, ep: ${epNum})...`)
+            
+            // Waterfall will return deduped AnimeTorrent[]
             let results = await this.executeSearchWaterfall(opts.media, opts.query, opts.resolution, isBatch, epNum)
 
-            if (isBatch) {
-                results = results.map(t => {
-                    t.isBatch = true
-                    return t
-                })
-            } else if (epNum && epNum > 0) {
-                results = this.filterByEpisode(results, epNum)
+            // Post-search filtering for episode numbers
+            if (!isBatch && epNum && epNum > 0) {
+                const filtered = this.filterByEpisode(results, epNum)
+                // If filter wipes everything, return original set (better to show more than nothing)
+                if (filtered.length > 0) {
+                    results = filtered
+                }
             }
 
             return results
@@ -129,7 +131,7 @@ class Provider {
     }
 
     //+ --------------------------------------------------------------------------------------------------
-    // Search Strategies
+    // Search Waterfall Logic
     //+ --------------------------------------------------------------------------------------------------
 
     private async executeSearchWaterfall(
@@ -140,95 +142,137 @@ class Provider {
         episodeNumber?: number
     ): Promise<AnimeTorrent[]> {
         
-        const strategies = this.buildSearchStrategies(media, customQuery)
-        
-        // Append resolution ONLY to the first strategy
-        if (strategies.length > 0 && resolution) {
-            strategies[0] = `${strategies[0]} ${resolution}`
-        }
-
+        const allResultsMap = new Map<string, AnimeTorrent>()
         const baseUrl = this.getApiUrl()
         const batchParam = isBatch ? "&batch=true" : ""
 
-        for (let i = 0; i < strategies.length; i++) {
-            const query = strategies[i]
-            if (!query) continue
-
-            const url = `${baseUrl}/torrents/search?query=${encodeURIComponent(query)}&sort_by=best&limit=50${batchParam}`
-            
-            try {
-                const torrents = await this.fetchTorrents(url)
-                if (torrents.length > 0) {
-                    console.log(`nekoBT: strategy ${i + 1} succeeded with query: ${query}`)
-                    return torrents.map(t => this.toAnimeTorrent(t))
-                }
-            } catch (err) {
-                console.warn(`nekoBT: strategy ${i + 1} failed for query ${query}: ${(err as Error).message}`)
+        // Strategy A: Refined/Custom Title
+        const primaryTitle = customQuery || media.romajiTitle || media.englishTitle || ""
+        const primaryStrategies = this.buildStrategySet(primaryTitle, episodeNumber, resolution)
+        
+        for (const query of primaryStrategies) {
+            const results = await this.tryQuery(query, baseUrl, batchParam)
+            if (results.length > 0) {
+                console.log(`nekoBT: Strategy A (Primary) succeeded with query: ${query}`)
+                this.mergeResults(allResultsMap, results, media, isBatch, episodeNumber, resolution)
+                return this.finalizeResults(allResultsMap) // Return early for primary success
             }
         }
 
-        const original = customQuery || media.romajiTitle || media.englishTitle || "unknown"
-        console.warn(`nekoBT: all strategies exhausted for: ${original}`)
+        // Strategy B: Alternative Titles & Synonyms
+        const altTitles = [media.romajiTitle, media.englishTitle, ...(media.synonyms || [])]
+            .filter(t => t && t !== primaryTitle)
+            .filter((v, i, a) => a.indexOf(v) === i) as string[]
+
+        for (const title of altTitles) {
+            const strategies = this.buildStrategySet(title, episodeNumber, undefined) // Drop resolution for fallback
+            for (const query of strategies) {
+                const results = await this.tryQuery(query, baseUrl, batchParam)
+                if (results.length > 0) {
+                    console.log(`nekoBT: Strategy B (Alternative) succeeded with query: ${query}`)
+                    this.mergeResults(allResultsMap, results, media, isBatch, episodeNumber, resolution)
+                }
+            }
+            if (allResultsMap.size > 0) return this.finalizeResults(allResultsMap)
+        }
+
+        // Strategy C: Broad Title Fallback
+        const broadTitle = this.sanitizeTitle(primaryTitle).split(" ").slice(0, 3).join(" ")
+        if (broadTitle && broadTitle.length > 3) {
+            const results = await this.tryQuery(broadTitle, baseUrl, batchParam)
+            if (results.length > 0) {
+                console.log(`nekoBT: Strategy C (Broad) succeeded with query: ${broadTitle}`)
+                this.mergeResults(allResultsMap, results, media, isBatch, episodeNumber, resolution)
+                return this.finalizeResults(allResultsMap)
+            }
+        }
+
+        console.warn(`nekoBT: All strategies exhausted for: ${primaryTitle}`)
         return []
     }
 
-    private buildSearchStrategies(media: Media, customQuery?: string): string[] {
-        const queries: string[] = []
-        const baseTitle = customQuery || media.romajiTitle || media.englishTitle || ""
+    private buildStrategySet(title: string, epNum?: number, res?: string): string[] {
+        const base = this.sanitizeTitle(title)
+        if (!base) return []
 
-        if (!baseTitle) return queries
+        const strategies: string[] = []
+        const epSuffix = epNum && epNum > 0 ? ` ${epNum}` : ""
+        const resSuffix = res ? ` ${res}` : ""
 
-        // Strategy 1: Full sanitized title
-        queries.push(this.sanitizeTitle(baseTitle))
-
-        // Strategy 2: Subtitle only (everything after last colon)
-        if (baseTitle.includes(":")) {
-            const parts = baseTitle.split(":")
-            queries.push(this.sanitizeTitle(parts[parts.length - 1]))
-        }
-
-        // Strategy 3: First 3 meaningful words (skip particles/articles)
-        const words = this.sanitizeTitle(baseTitle).split(/\s+/)
-        const stopWords = new Set(["no", "na", "wa", "ga", "wo", "the", "a", "an"])
-        const meaningful = words.filter(w => !stopWords.has(w.toLowerCase()))
+        // Standard
+        strategies.push(`${base}${epSuffix}${resSuffix}`.trim())
         
-        if (meaningful.length >= 3) {
-            queries.push(meaningful.slice(0, 3).join(" "))
-        } else if (meaningful.length > 0) {
-            queries.push(meaningful.join(" "))
+        // Zero-padded episode
+        if (epNum && epNum > 0) {
+            const paddedEp = String(epNum).padStart(2, "0")
+            strategies.push(`${base} ${paddedEp}${resSuffix}`.trim())
+            strategies.push(`${base} E${paddedEp}${resSuffix}`.trim())
         }
 
-        // Strategy 4: English synonyms (ASCII only)
-        if (media && media.synonyms) {
-            for (const syn of media.synonyms) {
-                // Ensure the synonym contains only ASCII characters to avoid breaking searches
-                if (/^[\x00-\x7F]*$/.test(syn)) {
-                    queries.push(this.sanitizeTitle(syn))
+        return [...new Set(strategies)]
+    }
+
+    private async tryQuery(query: string, baseUrl: string, batchParam: string): Promise<AnimeTorrent[]> {
+        const url = `${baseUrl}/torrents/search?query=${encodeURIComponent(query)}&sort_by=best&limit=50${batchParam}`
+        try {
+            const torrents = await this.fetchTorrents(url)
+            return torrents.map(t => this.toAnimeTorrent(t))
+        } catch (e) {
+            return []
+        }
+    }
+
+    private mergeResults(
+        map: Map<string, AnimeTorrent>, 
+        newResults: AnimeTorrent[],
+        media: Media,
+        isBatch?: boolean,
+        epNum?: number,
+        res?: string
+    ) {
+        for (const r of newResults) {
+            if (map.has(r.infoHash)) {
+                // Keep the one with better metadata or more seeders if already present
+                const existing = map.get(r.infoHash)!
+                if (r.seeders > existing.seeders) map.set(r.infoHash, r)
+                continue
+            }
+            
+            // Initial Ranking Weights
+            let score = r.seeders
+            const titleLower = r.name.toLowerCase()
+            
+            // Bonus for resolution match
+            if (res && titleLower.includes(res.toLowerCase())) score += 1000
+            
+            // Bonus for episode match
+            if (epNum && epNum > 0) {
+                const epStr = String(epNum)
+                const paddedEp = epStr.padStart(2, "0")
+                if (titleLower.includes(`e${epStr}`) || titleLower.includes(`ep${epStr}`) || titleLower.includes(` ${epStr} `) ||
+                    titleLower.includes(`e${paddedEp}`) || titleLower.includes(`ep${paddedEp}`) || titleLower.includes(` ${paddedEp} `)) {
+                    score += 500
                 }
             }
-        }
 
-        // Strategy 5: English title
-        if (media && media.englishTitle) {
-            queries.push(this.sanitizeTitle(media.englishTitle))
-        }
+            // Penalty for batch mismatch
+            if (isBatch && !r.isBatch) score -= 2000
+            if (!isBatch && r.isBatch) score -= 2000
 
-        // Deduplicate and remove empty
-        const uniqueQueries = [...new Set(queries.filter(q => q.trim().length > 0))]
-        return uniqueQueries
+            // Store with score for final sorting (not exposed in AnimeTorrent interface)
+            (r as any)._rankScore = score
+            map.set(r.infoHash, r)
+        }
+    }
+
+    private finalizeResults(map: Map<string, AnimeTorrent>): AnimeTorrent[] {
+        return Array.from(map.values()).sort((a, b) => ((b as any)._rankScore || 0) - ((a as any)._rankScore || 0))
     }
 
     private filterByEpisode(results: AnimeTorrent[], epNum: number): AnimeTorrent[] {
         const epStr = String(epNum)
         const regex = new RegExp(`(\\D|^)0*${epStr}(\\D|$)`, "i")
-        
-        const filtered = results.filter(t => {
-            if (t.isBatch) return false
-            return regex.test(t.name)
-        })
-
-        // If filtered set is empty, return the unfiltered set 
-        return filtered.length > 0 ? filtered : results
+        return results.filter(t => regex.test(t.name))
     }
 
     //+ --------------------------------------------------------------------------------------------------
@@ -236,21 +280,10 @@ class Provider {
     //+ --------------------------------------------------------------------------------------------------
 
     private async fetchTorrents(url: string): Promise<NekoBTTorrent[]> {
-        console.log(`nekoBT: Fetching from ${url}`)
-        
-        // No custom headers (no API key auth required)
         const res = await fetch(url)
-
-        if (!res.ok) {
-            throw new Error(`nekoBT: HTTP ${res.status} ${res.statusText}`)
-        }
-
+        if (!res.ok) throw new Error(`nekoBT: HTTP ${res.status}`)
         const json = await res.json() as NekoBTSearchResponse
-
-        if (json.error) {
-            throw new Error(`nekoBT: API error — ${json.message || "unknown error"}`)
-        }
-
+        if (json.error) throw new Error(`nekoBT: API error — ${json.message}`)
         return json.data?.results ?? []
     }
 
@@ -262,12 +295,7 @@ class Provider {
         const date = new Date(parseInt(t.uploaded_at, 10)).toISOString()
         const seeders = parseInt(t.seeders, 10) || 0
         const leechers = parseInt(t.leechers, 10) || 0
-        const downloadCount = parseInt(t.completed, 10) || 0
         const size = parseInt(t.filesize, 10) || 0
-
-        const releaseGroup = t.groups && t.groups.length > 0
-            ? t.groups[0].display_name
-            : ""
 
         return {
             name: t.title,
@@ -276,23 +304,18 @@ class Provider {
             formattedSize: "",
             seeders: seeders,
             leechers: leechers,
-            downloadCount: downloadCount,
+            downloadCount: parseInt(t.completed, 10) || 0,
             link: `https://nekobt.to/torrents/${t.id}`,
-            downloadUrl: undefined,
             magnetLink: t.magnet || undefined,
             infoHash: t.infohash || undefined,
             resolution: "",
             isBatch: t.batch,
             episodeNumber: -1,
-            releaseGroup: releaseGroup,
+            releaseGroup: (t.groups && t.groups.length > 0) ? t.groups[0].display_name : "",
             isBestRelease: false,
             confirmed: false,
         }
     }
-
-    //+ --------------------------------------------------------------------------------------------------
-    // Utilities
-    //+ --------------------------------------------------------------------------------------------------
 
     private getApiUrl(): string {
         let url = $getUserPreference("apiUrl") || this.defaultApiUrl
