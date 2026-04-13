@@ -5,7 +5,7 @@
   <a href="https://github.com/5rahim/seanime">
     <img src="https://img.shields.io/badge/Powered%20by-Seanime-blue?style=for-the-badge&logo=github" alt="Powered by Seanime">
   </a>
-  <img src="https://img.shields.io/badge/Version-1.2.0-gold?style=for-the-badge" alt="Version">
+  <img src="https://img.shields.io/badge/Version-1.2.1-gold?style=for-the-badge" alt="Version">
   <img src="https://img.shields.io/badge/Language-Arabic/English-green?style=for-the-badge" alt="Language">
 </div>
 
