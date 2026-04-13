@@ -133,10 +133,6 @@ class Provider {
         return torrent.magnetLink || ""
     }
 
-    //+ --------------------------------------------------------------------------------------------------
-    // Search Waterfall Logic
-    //+ --------------------------------------------------------------------------------------------------
-
     private async executeSearchWaterfall(
         media: Media, 
         customQuery?: string, 
@@ -149,7 +145,6 @@ class Provider {
         const baseUrl = this.getApiUrl()
         const batchParam = isBatch ? "&batch=true" : ""
 
-        // Strategy A: Direct/Sanitized Query + Media Recommendation Discovery
         const primaryTitle = customQuery || media.romajiTitle || media.englishTitle || ""
         const sanitizedPrimary = this.sanitizeTitle(primaryTitle)
         
@@ -166,79 +161,9 @@ class Provider {
                     return this.finalizeResults(allResultsMap)
                 }
 
-                // Strategy B: Media ID Recovery
-                const mediaIds = this.discoverMediaIds(response, media)
-                for (const mediaId of mediaIds) {
-                    console.log(`nekoBT: Checking recommended media ID: ${mediaId}`)
-                    const recovered = await this.tryMediaIdSearch(mediaId, baseUrl, batchParam, episodeNumber, resolution)
-                    if (recovered.length > 0) {
-                        console.log(`nekoBT: Recovered ${recovered.length} results from media ID ${mediaId}.`)
-                        this.mergeResults(allResultsMap, recovered, media, isBatch, episodeNumber, resolution)
-                    }
-                }
-                
-                if (allResultsMap.size > 0) {
-                    return this.finalizeResults(allResultsMap)
-                }
-            }
-        }
-
-        // Strategy C: Alternative Titles Waterfall
-        const altTitles = [media.romajiTitle, media.englishTitle, ...(media.synonyms || [])]
-            .filter(t => t && t !== primaryTitle)
-            .filter((v, i, a) => a.indexOf(v) === i) as string[]
-
-        for (const title of altTitles) {
-            const query = this.sanitizeTitle(title)
-            if (!query) continue
-
-            const results = await this.tryQuery(query, baseUrl, batchParam)
-            if (results.length > 0) {
-                console.log(`nekoBT: Title variant query returned ${results.length} results.`)
-                this.mergeResults(allResultsMap, results, media, isBatch, episodeNumber, resolution)
-                return this.finalizeResults(allResultsMap)
-            }
-        }
-
-        // Strategy D: Episode Formatting Retries
-        if (episodeNumber && episodeNumber > 0) {
-            const paddedEp = String(episodeNumber).padStart(2, "0")
-            const variants = [
-                `${sanitizedPrimary} ${paddedEp}`,
-                `${sanitizedPrimary} episode ${episodeNumber}`,
-                `${sanitizedPrimary} ep ${episodeNumber}`,
-                `${sanitizedPrimary} e${episodeNumber}`
-            ]
-            for (const q of variants) {
-                const results = await this.tryQuery(q, baseUrl, batchParam)
-                if (results.length > 0) {
-                    console.log(`nekoBT: Episode variant query returned ${results.length} results.`)
-                    this.mergeResults(allResultsMap, results, media, isBatch, episodeNumber, resolution)
-                    return this.finalizeResults(allResultsMap)
-                }
-            }
-        }
-
-        // Strategy E: Broad Fallback (First 3 words without strict filters)
-        // If batch was forced, try dropping batch parameter to locate items lacking batch metadata
-        const broadTitle = sanitizedPrimary.split(" ").slice(0, 3).join(" ")
-        if (broadTitle && broadTitle.length > 3) {
-            const results = await this.tryQuery(broadTitle, baseUrl, "") // Drop batch parameter
-            if (results.length > 0) {
-                console.log(`nekoBT: Broad fallback query returned ${results.length} results.`)
-                this.mergeResults(allResultsMap, results, media, isBatch, episodeNumber, resolution)
-                return this.finalizeResults(allResultsMap)
-            }
-        }
-
-        console.log(`nekoBT: Exhausted all search strategies. No results found.`)
-        return []
-    }
-
-                // Discovery Pass: If results are empty, check for recommended/similar media
                 const mediaId = this.discoverMediaId(response, media)
                 if (mediaId) {
-                    console.log(`nekoBT: Discovered media_id via recommendations: ${mediaId}`)
+                    console.log(`nekoBT: Found media recommendation ID: ${mediaId}`)
                     const recovered = await this.tryMediaIdSearch(mediaId, baseUrl, batchParam, episodeNumber, resolution)
                     if (recovered.length > 0) {
                         console.log(`nekoBT: Media ID search recovery succeeded for: ${mediaId}`)
@@ -249,7 +174,6 @@ class Provider {
             }
         }
 
-        // Strategy B: Alternative Titles Waterfall
         const altTitles = [media.romajiTitle, media.englishTitle, ...(media.synonyms || [])]
             .filter(t => t && t !== primaryTitle)
             .filter((v, i, a) => a.indexOf(v) === i) as string[]
@@ -260,13 +184,12 @@ class Provider {
 
             const results = await this.tryQuery(query, baseUrl, batchParam)
             if (results.length > 0) {
-                console.log(`nekoBT: Strategy B (Alternative) succeeded: ${query}`)
+                console.log(`nekoBT: Alternative title search succeeded: ${query}`)
                 this.mergeResults(allResultsMap, results, media, isBatch, episodeNumber, resolution)
                 return this.finalizeResults(allResultsMap)
             }
         }
 
-        // Strategy C: Episode Formatting Retries
         if (episodeNumber && episodeNumber > 0) {
             const paddedEp = String(episodeNumber).padStart(2, "0")
             const variants = [
@@ -278,19 +201,18 @@ class Provider {
             for (const q of variants) {
                 const results = await this.tryQuery(q, baseUrl, batchParam)
                 if (results.length > 0) {
-                    console.log(`nekoBT: Strategy C (Episode Variant) succeeded: ${q}`)
+                    console.log(`nekoBT: Episode variant search succeeded: ${q}`)
                     this.mergeResults(allResultsMap, results, media, isBatch, episodeNumber, resolution)
                     return this.finalizeResults(allResultsMap)
                 }
             }
         }
 
-        // Strategy D: Broad Fallback (First 3 words)
         const broadTitle = sanitizedPrimary.split(" ").slice(0, 3).join(" ")
         if (broadTitle && broadTitle.length > 3) {
             const results = await this.tryQuery(broadTitle, baseUrl, batchParam)
             if (results.length > 0) {
-                console.log(`nekoBT: Strategy D (Broad) succeeded: ${broadTitle}`)
+                console.log(`nekoBT: Broad fallback search succeeded: ${broadTitle}`)
                 this.mergeResults(allResultsMap, results, media, isBatch, episodeNumber, resolution)
                 return this.finalizeResults(allResultsMap)
             }
@@ -302,32 +224,26 @@ class Provider {
 
     private discoverMediaId(response: NekoBTSearchResponse, targetMedia: Media): string | null {
         if (!response.data) return null
-
-        // 1. Check Recommended Media (usually highest similarity)
         if (response.data.recommended_media && response.data.recommended_media.id) {
             return response.data.recommended_media.id
         }
-
-        // 2. Check Similar Media and pick best candidate
         if (response.data.similar_media && response.data.similar_media.length > 0) {
             const best = response.data.similar_media.sort((a, b) => b.similarity - a.similarity)[0]
-            if (best && best.similarity > 0.6) { // Similarity threshold
+            if (best && best.similarity > 0.6) {
                 return best.id
             }
         }
-
         return null
     }
 
     private async tryMediaIdSearch(mediaId: string, baseUrl: string, batchParam: string, epNum?: number, res?: string): Promise<AnimeTorrent[]> {
-        const epSuffix = epNum && epNum > 0 ? `&episode_ids=${epNum}` : "" // Note: nekoBT uses episode_ids as a filter
+        const epSuffix = epNum && epNum > 0 ? `&episode_ids=${epNum}` : ""
         const url = `${baseUrl}/torrents/search?media_id=${mediaId}&sort_by=best&limit=50${batchParam}${epSuffix}`
         
         try {
             const torrents = await this.fetchTorrents(url)
             return torrents.map(t => this.toAnimeTorrent(t))
         } catch (e) {
-            // If episode_ids filter was too strict, retry with just media_id and filter client-side
             if (epSuffix) {
                 return this.tryMediaIdSearch(mediaId, baseUrl, batchParam)
             }
@@ -356,14 +272,7 @@ class Provider {
         }
     }
 
-    private mergeResults(
-        map: Map<string, AnimeTorrent>, 
-        newResults: AnimeTorrent[],
-        media: Media,
-        isBatch?: boolean,
-        epNum?: number,
-        res?: string
-    ) {
+    private mergeResults(map: Map<string, AnimeTorrent>, newResults: AnimeTorrent[], media: Media, isBatch?: boolean, epNum?: number, res?: string) {
         for (const r of newResults) {
             if (map.has(r.infoHash)) {
                 const existing = map.get(r.infoHash)!
@@ -434,7 +343,7 @@ class Provider {
     }
 
     private getApiUrl(): string {
-        return "https://nekobt.to/api/v1"
+        return this.defaultApiUrl
     }
 
     private sanitizeTitle(title: string): string {

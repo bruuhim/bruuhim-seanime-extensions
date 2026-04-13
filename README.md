@@ -5,6 +5,7 @@
   <a href="https://github.com/5rahim/seanime">
     <img src="https://img.shields.io/badge/Powered%20by-Seanime-blue?style=for-the-badge&logo=github" alt="Powered by Seanime">
   </a>
+  <img src="https://img.shields.io/badge/Version-1.0.0-gold?style=for-the-badge" alt="Version">
   <img src="https://img.shields.io/badge/Language-Arabic/English-green?style=for-the-badge" alt="Language">
 </div>
 
@@ -27,15 +28,15 @@
 | **nekoBT**                | Public nekoBT torrent provider.        | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/anime-torrent-providers/nekobt/nekobt.json`     |
 
 ### nekoBT Highlights
-- **Media ID Discovery**: Uses nekoBT's internal `recommended_media` and `similar_media` signals to find the correct media ID when literal text search yields no torrents.
-- **Search Recovery**: Automatically pivots to a `media_id`-driven search if the initial query returns empty but suggests a media match.
-- **Smart Fallback**: Utilizes layered strategies including title cleanup, synonym retry, and episode formatting variants.
+- **Media ID Discovery**: Uses nekoBT search responses to identify media IDs when text queries yield no direct results.
+- **Automated Recovery**: Performs follow-up searches using discovered media IDs to improve result recall.
+- **Search Waterfall**: Sequentially attempts title variants and episode formatting to ensure consistency.
 
 <br />
 
 ## Manga Providers
 
-These providers feature AJAX fallbacks and Cloudflare bypass logic.
+Manga providers utilizing AJAX fallbacks and Cloudflare bypass logic.
 
 | Provider                  | Description                            | Installation Manifest (URL)                                                                                              |
 | :------------------------ | :------------------------------------- | :----------------------------------------------------------------------------------------------------------------------- |
@@ -58,7 +59,7 @@ Adds a link to media on MyAnimeList and AniList.
 
 ### [MAL-Button-Seanime](https://github.com/bruuhim/MAL-Button-Seanime)
 
-Adds a "Watch on Seanime" button into the MyAnimeList sidebar.
+Adds a "Watch on Seanime" button to the MyAnimeList sidebar.
 
 <p align="center">
   <img src="assets/screenshot-after.png" width="800" alt="MAL Button Preview">
@@ -68,27 +69,26 @@ Adds a "Watch on Seanime" button into the MyAnimeList sidebar.
 
 ## Installation Guide
 
-1. Copy the manifest URL for the provider you want.
-2. Open your Seanime dashboard.
+1. Copy the manifest URL for the desired provider.
+2. Open the Seanime dashboard.
 3. Navigate to **Settings** > **Extensions**.
-4. In the **External Manifest URL** field, paste the link.
+4. Paste the URL into the **External Manifest URL** field.
 5. Click **Install**.
 
 <br />
 
 ## Testing
 
-1. **Seanime Playground**: Load the manifest and test `search()` with titles like "STEEL BALL RUN".
-2. **Logs**: Check console for `nekoBT: Found media recommendation ID` or `nekoBT: Media ID search returned` to verify the recovery path.
-3. **Smart Search**: Verify that episode and batch toggles correctly affect the ranked results.
+1. **Seanime Playground**: Load the manifest and test `search()` or `smartSearch()`.
+2. **Media Recovery**: Test with titles such as `STEEL BALL RUN` to verify media ID pivoting.
+3. **Smart Search**: Verify that batch and episode number filters are correctly applied to recovered results.
 
 ## Technical Details
 
-- **Media Recommendation Flow**: The provider treats initial text queries as discovery steps. If no torrents are found but `recommended_media` is returned, it performs a follow-up search using the discovered `media_id`.
-- **Waterfall Search**: Tries exact title, cleaned title, synonyms, and episode variants sequentially.
-- **Dynamic Ranking**: Results are ranked by seeders, with weight bonuses for resolution and episode matching.
-- **Dual-Method Chapter Extraction**: (Manga) Combines Static Site Rendering (SSR) and AJAX calls.
-- **Dynamic Header Spoofing**: Built-in User-Agent rotation and Referer management.
+- **Media Recommendation Flow**: Initial queries are treated as discovery steps. If results are absent but `recommended_media` is present, the provider pivots to a `media_id` search.
+- **Waterfall Search**: attempts primary, cleaned, and variant queries sequentially.
+- **Deduplication**: Results are deduplicated by `infoHash` across fallback strategies.
+- **Dual-Method Chapter Extraction**: (Manga) Combines Static Site Rendering and AJAX.
 
 ---
 
