@@ -1,7 +1,7 @@
 <div align="center">
   <img src="https://raw.githubusercontent.com/5rahim/seanime/main/assets/banner.png" width="800" alt="Seanime Banner">
   <h1>🚀 Bruuhim's Seanime Extensions</h1>
-  <p>A collection of high-quality extensions and manga providers for the <b>Seanime</b> universe.</p>
+  <p>A collection of high-quality extensions and manga providers for the <b>Seanime</b> universe, including a public, no-auth nekoBT provider.</p>
 
   <a href="https://github.com/5rahim/seanime">
     <img src="https://img.shields.io/badge/Powered%20by-Seanime-blue?style=for-the-badge&logo=github" alt="Powered by Seanime">
@@ -65,6 +65,10 @@ Seamlessly adds a native-feeling "Watch on Seanime" button directly into the MyA
 _Note: For browser extensions (Open-in-Seanime/MAL-Button), please follow the specific instructions on their respective repository pages._
 
 <br />
+
+## ⚙️ Configuration
+
+No configuration required. Works out of the box — no account or API key needed.
 
 ## ⚙️ Technical Details
 
