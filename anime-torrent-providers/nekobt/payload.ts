@@ -161,10 +161,79 @@ class Provider {
             const response = await this.tryFullResponse(query, baseUrl, batchParam)
             if (response && response.data) {
                 if (response.data.results && response.data.results.length > 0) {
-                    console.log(`nekoBT: Direct query succeeded: ${query}`)
+                    console.log(`nekoBT: Direct query returned ${response.data.results.length} results.`)
                     this.mergeResults(allResultsMap, response.data.results.map(t => this.toAnimeTorrent(t)), media, isBatch, episodeNumber, resolution)
                     return this.finalizeResults(allResultsMap)
                 }
+
+                // Strategy B: Media ID Recovery
+                const mediaIds = this.discoverMediaIds(response, media)
+                for (const mediaId of mediaIds) {
+                    console.log(`nekoBT: Checking recommended media ID: ${mediaId}`)
+                    const recovered = await this.tryMediaIdSearch(mediaId, baseUrl, batchParam, episodeNumber, resolution)
+                    if (recovered.length > 0) {
+                        console.log(`nekoBT: Recovered ${recovered.length} results from media ID ${mediaId}.`)
+                        this.mergeResults(allResultsMap, recovered, media, isBatch, episodeNumber, resolution)
+                    }
+                }
+                
+                if (allResultsMap.size > 0) {
+                    return this.finalizeResults(allResultsMap)
+                }
+            }
+        }
+
+        // Strategy C: Alternative Titles Waterfall
+        const altTitles = [media.romajiTitle, media.englishTitle, ...(media.synonyms || [])]
+            .filter(t => t && t !== primaryTitle)
+            .filter((v, i, a) => a.indexOf(v) === i) as string[]
+
+        for (const title of altTitles) {
+            const query = this.sanitizeTitle(title)
+            if (!query) continue
+
+            const results = await this.tryQuery(query, baseUrl, batchParam)
+            if (results.length > 0) {
+                console.log(`nekoBT: Title variant query returned ${results.length} results.`)
+                this.mergeResults(allResultsMap, results, media, isBatch, episodeNumber, resolution)
+                return this.finalizeResults(allResultsMap)
+            }
+        }
+
+        // Strategy D: Episode Formatting Retries
+        if (episodeNumber && episodeNumber > 0) {
+            const paddedEp = String(episodeNumber).padStart(2, "0")
+            const variants = [
+                `${sanitizedPrimary} ${paddedEp}`,
+                `${sanitizedPrimary} episode ${episodeNumber}`,
+                `${sanitizedPrimary} ep ${episodeNumber}`,
+                `${sanitizedPrimary} e${episodeNumber}`
+            ]
+            for (const q of variants) {
+                const results = await this.tryQuery(q, baseUrl, batchParam)
+                if (results.length > 0) {
+                    console.log(`nekoBT: Episode variant query returned ${results.length} results.`)
+                    this.mergeResults(allResultsMap, results, media, isBatch, episodeNumber, resolution)
+                    return this.finalizeResults(allResultsMap)
+                }
+            }
+        }
+
+        // Strategy E: Broad Fallback (First 3 words without strict filters)
+        // If batch was forced, try dropping batch parameter to locate items lacking batch metadata
+        const broadTitle = sanitizedPrimary.split(" ").slice(0, 3).join(" ")
+        if (broadTitle && broadTitle.length > 3) {
+            const results = await this.tryQuery(broadTitle, baseUrl, "") // Drop batch parameter
+            if (results.length > 0) {
+                console.log(`nekoBT: Broad fallback query returned ${results.length} results.`)
+                this.mergeResults(allResultsMap, results, media, isBatch, episodeNumber, resolution)
+                return this.finalizeResults(allResultsMap)
+            }
+        }
+
+        console.log(`nekoBT: Exhausted all search strategies. No results found.`)
+        return []
+    }
 
                 // Discovery Pass: If results are empty, check for recommended/similar media
                 const mediaId = this.discoverMediaId(response, media)
