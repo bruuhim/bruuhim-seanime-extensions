@@ -28,9 +28,9 @@
 | **nekoBT**                | Public nekoBT torrent provider.        | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/anime-torrent-providers/nekobt/nekobt.json`     |
 
 ### nekoBT Highlights
-- **Media ID Discovery**: Uses nekoBT search responses to identify media IDs when text queries yield no direct results.
-- **Automated Recovery**: Performs follow-up searches using discovered media IDs to improve result recall.
-- **Search Waterfall**: Sequentially attempts title variants and episode formatting to ensure consistency.
+- **Media Recommendation Recovery**: Leverages nekoBT search metadata to find media IDs when text queries yield no direct results.
+- **Search Waterfall**: Sequentially attempts primary queries, media recommendation pivots, and alternative title variants.
+- **Robust Ranking**: Orders results based on seeders, resolution proximity, and episode matching.
 
 <br />
 
@@ -39,7 +39,7 @@
 Manga providers utilizing AJAX fallbacks and Cloudflare bypass logic.
 
 | Provider                  | Description                            | Installation Manifest (URL)                                                                                              |
-| :------------------------ | :------------------------------------- | :----------------------------------------------------------------------------------------------------------------------- |
+| :------------------------ | :------------------------------------- | :------------------------------------------------ :--------------------------------------------------------------------- |
 | **3asq (Arabic)**         | Arabic manga from 3asq.org             | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/manga-providers/3asq/3asq.json`               |
 | **AzoraMoon (Arabic)**    | Arabic manga from azoramoon.com        | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/manga-providers/azoramoon/azoramoon.json`     |
 | **OlympusStaff (Arabic)** | Arabic manga from olympustaff.com      | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/manga-providers/olympustaff/olympustaff.json` |
@@ -80,15 +80,14 @@ Adds a "Watch on Seanime" button to the MyAnimeList sidebar.
 ## Testing
 
 1. **Seanime Playground**: Load the manifest and test `search()` or `smartSearch()`.
-2. **Media Recovery**: Test with titles such as `STEEL BALL RUN` to verify media ID pivoting.
-3. **Smart Search**: Verify that batch and episode number filters are correctly applied to recovered results.
+2. **Fallback Verification**: Test with titles such as `STEEL BALL RUN` to verify media ID recommendation recovery.
+3. **Smart Search**: Verify that batch and episode number filters are correctly applied to results.
 
 ## Technical Details
 
-- **Media Recommendation Flow**: Initial queries are treated as discovery steps. If results are absent but `recommended_media` is present, the provider pivots to a `media_id` search.
-- **Waterfall Search**: attempts primary, cleaned, and variant queries sequentially.
-- **Deduplication**: Results are deduplicated by `infoHash` across fallback strategies.
-- **Dual-Method Chapter Extraction**: (Manga) Combines Static Site Rendering and AJAX.
+- **Media Discovery**: Treatment of initial queries as discovery steps. If results are absent but `recommended_media` is present, the provider pivots to a `media_id` search.
+- **Waterfall Search**: Primary query -> Media ID Recovery -> Alt Titles -> Episode Variants -> Broad Fallback.
+- **Type Safety**: Results are processed through a strictly-typed mapping pipeline to prevent runtime errors.
 
 ---
 
