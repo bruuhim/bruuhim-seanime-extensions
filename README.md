@@ -5,7 +5,7 @@
   <a href="https://github.com/5rahim/seanime">
     <img src="https://img.shields.io/badge/Powered%20by-Seanime-blue?style=for-the-badge&logo=github" alt="Powered by Seanime">
   </a>
-  <img src="https://img.shields.io/badge/Version-1.1.0-gold?style=for-the-badge" alt="Version">
+  <img src="https://img.shields.io/badge/Version-1.2.0-gold?style=for-the-badge" alt="Version">
   <img src="https://img.shields.io/badge/Language-Arabic/English-green?style=for-the-badge" alt="Language">
 </div>
 
@@ -25,12 +25,12 @@
 
 | Provider                  | Description                            | Installation Manifest (URL)                                                                                              |
 | :------------------------ | :------------------------------------- | :----------------------------------------------------------------------------------------------------------------------- |
-| **nekoBT (Public)**       | Robust, no-auth nekoBT provider.      | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/anime-torrent-providers/nekobt/nekobt.json`     |
+| **nekoBT (Public)**       | Advanced public nekoBT provider.      | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/anime-torrent-providers/nekobt/nekobt.json`     |
 
 ### nekoBT Highlights
-- **Zero Setup**: No API key or account required. Works out of the box.
-- **Smart Fallback**: Layered search strategies (Exact -> Alt Titles -> Broad) to minimize empty results.
-- **Reliable Extraction**: Advanced client-side filtering for episode matching.
+- **Media ID Discovery**: Uses nekoBT's internal `recommended_media` and `similar_media` signals to find the correct media ID when text search fails.
+- **Search Recovery**: If a direct query returns no torrents but suggests a match, the provider automatically pivots to a `media_id`-driven search.
+- **Smart Fallback**: Layered strategies including title cleanup, synonym retry, and episode formatting variants.
 
 <br />
 
@@ -77,16 +77,17 @@ Seamlessly adds a native-feeling "Watch on Seanime" button directly into the MyA
 
 <br />
 
-## ⚙️ Configuration
+## ⚙️ Testing
 
-- **nekoBT**: No configuration required. 
-- **Manga Providers**: Generally no configuration required unless specified.
+1. **Seanime Playground**: Load the manifest and test `search()` with titles like "STEEL BALL RUN".
+2. **Logs**: Check console for `nekoBT: Discovered media_id` or `nekoBT: Media ID search recovery succeeded` to verify the recovery path.
+3. **Smart Search**: Verify that episode and batch toggles correctly affect the ranked results.
 
 ## ⚙️ Technical Details
 
-- **Multi-Strategy Waterfall**: (Torrent) Tries up to 10+ query variants per smart search to ensure matches.
-- **Dual-Method Chapter Extraction**: (Manga) Combines Static Site Rendering (SSR) and AJAX calls for 99% reliability.
-- **Dynamic Header Spoofing**: Built-in User-Agent rotation and Referer management.
+- **Media Recommendation Flow**: The provider treats initial text queries as discovery steps. If no torrents are found but `recommended_media` is returned, it performs a follow-up search using the discovered `media_id`.
+- **Waterfall Search**: Tries exact title, cleaned title, synonyms, and episode variants sequentially.
+- **Dynamic Ranking**: Results are ranked by seeders, with weight bonuses for resolution and episode matching.
 
 ---
 

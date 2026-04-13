@@ -56,8 +56,16 @@ interface NekoBTSearchResponse {
     data?: {
         results: NekoBTTorrent[]
         more?: boolean
-        recommended_media?: unknown
-        similar_media?: unknown[]
+        recommended_media?: {
+            id: string
+            title: string
+            similarity: number
+        } | null
+        similar_media?: {
+            id: string
+            title: string
+            similarity: number
+        }[] | null
         infohash_match?: string | null
     }
 }
@@ -103,16 +111,11 @@ class Provider {
             
             console.log(`nekoBT: Smart searching (batch: ${isBatch}, ep: ${epNum})...`)
             
-            // Waterfall will return deduped AnimeTorrent[]
             let results = await this.executeSearchWaterfall(opts.media, opts.query, opts.resolution, isBatch, epNum)
 
-            // Post-search filtering for episode numbers
             if (!isBatch && epNum && epNum > 0) {
                 const filtered = this.filterByEpisode(results, epNum)
-                // If filter wipes everything, return original set (better to show more than nothing)
-                if (filtered.length > 0) {
-                    results = filtered
-                }
+                if (filtered.length > 0) results = filtered
             }
 
             return results
@@ -146,42 +149,79 @@ class Provider {
         const baseUrl = this.getApiUrl()
         const batchParam = isBatch ? "&batch=true" : ""
 
-        // Strategy A: Refined/Custom Title
+        // Strategy A: Direct/Sanitized Query + Media Recommendation Discovery
         const primaryTitle = customQuery || media.romajiTitle || media.englishTitle || ""
-        const primaryStrategies = this.buildStrategySet(primaryTitle, episodeNumber, resolution)
+        const sanitizedPrimary = this.sanitizeTitle(primaryTitle)
         
-        for (const query of primaryStrategies) {
-            const results = await this.tryQuery(query, baseUrl, batchParam)
-            if (results.length > 0) {
-                console.log(`nekoBT: Strategy A (Primary) succeeded with query: ${query}`)
-                this.mergeResults(allResultsMap, results, media, isBatch, episodeNumber, resolution)
-                return this.finalizeResults(allResultsMap) // Return early for primary success
+        if (sanitizedPrimary) {
+            const epSuffix = episodeNumber && episodeNumber > 0 ? ` ${episodeNumber}` : ""
+            const resSuffix = resolution ? ` ${resolution}` : ""
+            const query = `${sanitizedPrimary}${epSuffix}${resSuffix}`.trim()
+            
+            const response = await this.tryFullResponse(query, baseUrl, batchParam)
+            if (response && response.data) {
+                if (response.data.results && response.data.results.length > 0) {
+                    console.log(`nekoBT: Direct query succeeded: ${query}`)
+                    this.mergeResults(allResultsMap, response.data.results.map(t => this.toAnimeTorrent(t)), media, isBatch, episodeNumber, resolution)
+                    return this.finalizeResults(allResultsMap)
+                }
+
+                // Discovery Pass: If results are empty, check for recommended/similar media
+                const mediaId = this.discoverMediaId(response, media)
+                if (mediaId) {
+                    console.log(`nekoBT: Discovered media_id via recommendations: ${mediaId}`)
+                    const recovered = await this.tryMediaIdSearch(mediaId, baseUrl, batchParam, episodeNumber, resolution)
+                    if (recovered.length > 0) {
+                        console.log(`nekoBT: Media ID search recovery succeeded for: ${mediaId}`)
+                        this.mergeResults(allResultsMap, recovered, media, isBatch, episodeNumber, resolution)
+                        return this.finalizeResults(allResultsMap)
+                    }
+                }
             }
         }
 
-        // Strategy B: Alternative Titles & Synonyms
+        // Strategy B: Alternative Titles Waterfall
         const altTitles = [media.romajiTitle, media.englishTitle, ...(media.synonyms || [])]
             .filter(t => t && t !== primaryTitle)
             .filter((v, i, a) => a.indexOf(v) === i) as string[]
 
         for (const title of altTitles) {
-            const strategies = this.buildStrategySet(title, episodeNumber, undefined) // Drop resolution for fallback
-            for (const query of strategies) {
-                const results = await this.tryQuery(query, baseUrl, batchParam)
-                if (results.length > 0) {
-                    console.log(`nekoBT: Strategy B (Alternative) succeeded with query: ${query}`)
-                    this.mergeResults(allResultsMap, results, media, isBatch, episodeNumber, resolution)
-                }
+            const query = this.sanitizeTitle(title)
+            if (!query) continue
+
+            const results = await this.tryQuery(query, baseUrl, batchParam)
+            if (results.length > 0) {
+                console.log(`nekoBT: Strategy B (Alternative) succeeded: ${query}`)
+                this.mergeResults(allResultsMap, results, media, isBatch, episodeNumber, resolution)
+                return this.finalizeResults(allResultsMap)
             }
-            if (allResultsMap.size > 0) return this.finalizeResults(allResultsMap)
         }
 
-        // Strategy C: Broad Title Fallback
-        const broadTitle = this.sanitizeTitle(primaryTitle).split(" ").slice(0, 3).join(" ")
+        // Strategy C: Episode Formatting Retries
+        if (episodeNumber && episodeNumber > 0) {
+            const paddedEp = String(episodeNumber).padStart(2, "0")
+            const variants = [
+                `${sanitizedPrimary} ${paddedEp}`,
+                `${sanitizedPrimary} E${paddedEp}`,
+                `${sanitizedPrimary} EP${paddedEp}`,
+                `${sanitizedPrimary} ep${episodeNumber}`
+            ]
+            for (const q of variants) {
+                const results = await this.tryQuery(q, baseUrl, batchParam)
+                if (results.length > 0) {
+                    console.log(`nekoBT: Strategy C (Episode Variant) succeeded: ${q}`)
+                    this.mergeResults(allResultsMap, results, media, isBatch, episodeNumber, resolution)
+                    return this.finalizeResults(allResultsMap)
+                }
+            }
+        }
+
+        // Strategy D: Broad Fallback (First 3 words)
+        const broadTitle = sanitizedPrimary.split(" ").slice(0, 3).join(" ")
         if (broadTitle && broadTitle.length > 3) {
             const results = await this.tryQuery(broadTitle, baseUrl, batchParam)
             if (results.length > 0) {
-                console.log(`nekoBT: Strategy C (Broad) succeeded with query: ${broadTitle}`)
+                console.log(`nekoBT: Strategy D (Broad) succeeded: ${broadTitle}`)
                 this.mergeResults(allResultsMap, results, media, isBatch, episodeNumber, resolution)
                 return this.finalizeResults(allResultsMap)
             }
@@ -191,25 +231,39 @@ class Provider {
         return []
     }
 
-    private buildStrategySet(title: string, epNum?: number, res?: string): string[] {
-        const base = this.sanitizeTitle(title)
-        if (!base) return []
+    private discoverMediaId(response: NekoBTSearchResponse, targetMedia: Media): string | null {
+        if (!response.data) return null
 
-        const strategies: string[] = []
-        const epSuffix = epNum && epNum > 0 ? ` ${epNum}` : ""
-        const resSuffix = res ? ` ${res}` : ""
-
-        // Standard
-        strategies.push(`${base}${epSuffix}${resSuffix}`.trim())
-        
-        // Zero-padded episode
-        if (epNum && epNum > 0) {
-            const paddedEp = String(epNum).padStart(2, "0")
-            strategies.push(`${base} ${paddedEp}${resSuffix}`.trim())
-            strategies.push(`${base} E${paddedEp}${resSuffix}`.trim())
+        // 1. Check Recommended Media (usually highest similarity)
+        if (response.data.recommended_media && response.data.recommended_media.id) {
+            return response.data.recommended_media.id
         }
 
-        return [...new Set(strategies)]
+        // 2. Check Similar Media and pick best candidate
+        if (response.data.similar_media && response.data.similar_media.length > 0) {
+            const best = response.data.similar_media.sort((a, b) => b.similarity - a.similarity)[0]
+            if (best && best.similarity > 0.6) { // Similarity threshold
+                return best.id
+            }
+        }
+
+        return null
+    }
+
+    private async tryMediaIdSearch(mediaId: string, baseUrl: string, batchParam: string, epNum?: number, res?: string): Promise<AnimeTorrent[]> {
+        const epSuffix = epNum && epNum > 0 ? `&episode_ids=${epNum}` : "" // Note: nekoBT uses episode_ids as a filter
+        const url = `${baseUrl}/torrents/search?media_id=${mediaId}&sort_by=best&limit=50${batchParam}${epSuffix}`
+        
+        try {
+            const torrents = await this.fetchTorrents(url)
+            return torrents.map(t => this.toAnimeTorrent(t))
+        } catch (e) {
+            // If episode_ids filter was too strict, retry with just media_id and filter client-side
+            if (epSuffix) {
+                return this.tryMediaIdSearch(mediaId, baseUrl, batchParam)
+            }
+            return []
+        }
     }
 
     private async tryQuery(query: string, baseUrl: string, batchParam: string): Promise<AnimeTorrent[]> {
@@ -219,6 +273,17 @@ class Provider {
             return torrents.map(t => this.toAnimeTorrent(t))
         } catch (e) {
             return []
+        }
+    }
+
+    private async tryFullResponse(query: string, baseUrl: string, batchParam: string): Promise<NekoBTSearchResponse | null> {
+        const url = `${baseUrl}/torrents/search?query=${encodeURIComponent(query)}&sort_by=best&limit=50${batchParam}`
+        try {
+            const res = await fetch(url)
+            if (!res.ok) return null
+            return await res.json() as NekoBTSearchResponse
+        } catch (e) {
+            return null
         }
     }
 
@@ -232,20 +297,16 @@ class Provider {
     ) {
         for (const r of newResults) {
             if (map.has(r.infoHash)) {
-                // Keep the one with better metadata or more seeders if already present
                 const existing = map.get(r.infoHash)!
                 if (r.seeders > existing.seeders) map.set(r.infoHash, r)
                 continue
             }
             
-            // Initial Ranking Weights
             let score = r.seeders
             const titleLower = r.name.toLowerCase()
             
-            // Bonus for resolution match
             if (res && titleLower.includes(res.toLowerCase())) score += 1000
             
-            // Bonus for episode match
             if (epNum && epNum > 0) {
                 const epStr = String(epNum)
                 const paddedEp = epStr.padStart(2, "0")
@@ -255,11 +316,9 @@ class Provider {
                 }
             }
 
-            // Penalty for batch mismatch
             if (isBatch && !r.isBatch) score -= 2000
             if (!isBatch && r.isBatch) score -= 2000
 
-            // Store with score for final sorting (not exposed in AnimeTorrent interface)
             (r as any)._rankScore = score
             map.set(r.infoHash, r)
         }
@@ -275,10 +334,6 @@ class Provider {
         return results.filter(t => regex.test(t.name))
     }
 
-    //+ --------------------------------------------------------------------------------------------------
-    // Core fetch
-    //+ --------------------------------------------------------------------------------------------------
-
     private async fetchTorrents(url: string): Promise<NekoBTTorrent[]> {
         const res = await fetch(url)
         if (!res.ok) throw new Error(`nekoBT: HTTP ${res.status}`)
@@ -287,23 +342,15 @@ class Provider {
         return json.data?.results ?? []
     }
 
-    //+ --------------------------------------------------------------------------------------------------
-    // Mapping
-    //+ --------------------------------------------------------------------------------------------------
-
     private toAnimeTorrent(t: NekoBTTorrent): AnimeTorrent {
         const date = new Date(parseInt(t.uploaded_at, 10)).toISOString()
-        const seeders = parseInt(t.seeders, 10) || 0
-        const leechers = parseInt(t.leechers, 10) || 0
-        const size = parseInt(t.filesize, 10) || 0
-
         return {
             name: t.title,
             date: date,
-            size: size,
+            size: parseInt(t.filesize, 10) || 0,
             formattedSize: "",
-            seeders: seeders,
-            leechers: leechers,
+            seeders: parseInt(t.seeders, 10) || 0,
+            leechers: parseInt(t.leechers, 10) || 0,
             downloadCount: parseInt(t.completed, 10) || 0,
             link: `https://nekobt.to/torrents/${t.id}`,
             magnetLink: t.magnet || undefined,
@@ -318,8 +365,7 @@ class Provider {
     }
 
     private getApiUrl(): string {
-        let url = $getUserPreference("apiUrl") || this.defaultApiUrl
-        return url.endsWith("/") ? url.slice(0, -1) : url
+        return "https://nekobt.to/api/v1"
     }
 
     private sanitizeTitle(title: string): string {
