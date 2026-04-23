@@ -182,15 +182,16 @@ class Provider {
             }
         }
 
-        const primaryTitle = customQuery || media.romajiTitle || media.englishTitle || ""
-        const sanitizedPrimary = customQuery ? customQuery.trim() : this.sanitizeTitle(primaryTitle)
+        const validCustomQuery = (customQuery && typeof customQuery === "string") ? customQuery.trim() : "";
+        const primaryTitle = validCustomQuery || media.romajiTitle || media.englishTitle || ""
+        const sanitizedPrimary = validCustomQuery ? validCustomQuery : this.sanitizeTitle(primaryTitle)
         
         let discoveredMediaId: string | null = null
 
         // Direct Title Query
         if (sanitizedPrimary) {
-            const epSuffix = (!customQuery && episodeNumber && episodeNumber > 0) ? ` ${episodeNumber}` : ""
-            const resSuffix = (!customQuery && resolution) ? ` ${resolution}` : ""
+            const epSuffix = (!validCustomQuery && episodeNumber && episodeNumber > 0) ? ` ${episodeNumber}` : ""
+            const resSuffix = (!validCustomQuery && resolution) ? ` ${resolution}` : ""
             const query = `${sanitizedPrimary}${epSuffix}${resSuffix}`.trim()
             
             const url = `${baseUrl}/torrents/search?query=${encodeURIComponent(query)}&sort_by=best&limit=50${batchParam}${videoCodecParam}`
