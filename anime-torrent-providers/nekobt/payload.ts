@@ -169,12 +169,12 @@ class Provider {
             const response = await this.tryFullResponseUrl(url)
             if (response && response.data && Array.isArray(response.data.results) && response.data.results.length > 0) {
                 console.debug(`nekoBT: TVDB ID search returned ${response.data.results.length} results.`)
-                this.mergeResults(allResultsMap, response.data.results.map(t => this.toAnimeTorrent(t)), isBatch, episodeNumber, resolution)
+                this.mergeResults(allResultsMap, response.data.results.map(t => this.toAnimeTorrent(t, episodeNumber)), isBatch, episodeNumber, resolution)
                 
                 if (response.data.results.length < 10 && response.data.more) {
                     const response2 = await this.tryFullResponseUrl(`${url}&offset=50`)
                     if (response2 && response2.data && Array.isArray(response2.data.results)) {
-                        this.mergeResults(allResultsMap, response2.data.results.map(t => this.toAnimeTorrent(t)), isBatch, episodeNumber, resolution)
+                        this.mergeResults(allResultsMap, response2.data.results.map(t => this.toAnimeTorrent(t, episodeNumber)), isBatch, episodeNumber, resolution)
                     }
                 }
                 
@@ -202,12 +202,12 @@ class Provider {
                 
                 if (Array.isArray(response.data.results) && response.data.results.length > 0) {
                     console.debug(`nekoBT: Direct query returned ${response.data.results.length} results.`)
-                    this.mergeResults(allResultsMap, response.data.results.map(t => this.toAnimeTorrent(t)), isBatch, episodeNumber, resolution)
+                    this.mergeResults(allResultsMap, response.data.results.map(t => this.toAnimeTorrent(t, episodeNumber)), isBatch, episodeNumber, resolution)
                     
                     if (response.data.results.length < 10 && response.data.more) {
                         const response2 = await this.tryFullResponseUrl(`${url}&offset=50`)
                         if (response2 && response2.data && Array.isArray(response2.data.results)) {
-                            this.mergeResults(allResultsMap, response2.data.results.map(t => this.toAnimeTorrent(t)), isBatch, episodeNumber, resolution)
+                            this.mergeResults(allResultsMap, response2.data.results.map(t => this.toAnimeTorrent(t, episodeNumber)), isBatch, episodeNumber, resolution)
                         }
                     }
                     return this.finalizeResults(allResultsMap)
@@ -218,7 +218,7 @@ class Provider {
         // Media ID + Episode Filter
         if (discoveredMediaId && episodeNumber && episodeNumber > 0) {
             const url = `${baseUrl}/torrents/search?mediaid=${discoveredMediaId}&episodeids=${episodeNumber}&sort_by=best&limit=50${batchParam}${videoCodecParam}`
-            const results = await this.tryQueryUrl(url)
+            const results = await this.tryQueryUrl(url, episodeNumber)
             if (results.length > 0) {
                 console.debug(`nekoBT: Media ID + episode filter returned ${results.length} results.`)
                 this.mergeResults(allResultsMap, results, isBatch, episodeNumber, resolution)
@@ -229,7 +229,7 @@ class Provider {
         // Media ID without Episode Filter
         if (discoveredMediaId) {
             const url = `${baseUrl}/torrents/search?mediaid=${discoveredMediaId}&sort_by=best&limit=50${batchParam}${videoCodecParam}`
-            const results = await this.tryQueryUrl(url)
+            const results = await this.tryQueryUrl(url, episodeNumber)
             if (results.length > 0) {
                 console.debug(`nekoBT: Media ID without episode filter returned ${results.length} results.`)
                 this.mergeResults(allResultsMap, results, isBatch, episodeNumber, resolution)
@@ -247,7 +247,7 @@ class Provider {
             if (!query) continue
 
             const url = `${baseUrl}/torrents/search?query=${encodeURIComponent(query)}&sort_by=best&limit=50${batchParam}${videoCodecParam}`
-            const results = await this.tryQueryUrl(url)
+            const results = await this.tryQueryUrl(url, episodeNumber)
             if (results.length > 0) {
                 console.debug(`nekoBT: Alternative title search succeeded: ${query}`)
                 this.mergeResults(allResultsMap, results, isBatch, episodeNumber, resolution)
@@ -266,7 +266,7 @@ class Provider {
             ]
             for (const q of variants) {
                 const url = `${baseUrl}/torrents/search?query=${encodeURIComponent(q)}&sort_by=best&limit=50${batchParam}${videoCodecParam}`
-                const results = await this.tryQueryUrl(url)
+                const results = await this.tryQueryUrl(url, episodeNumber)
                 if (results.length > 0) {
                     console.debug(`nekoBT: Episode variant search succeeded: ${q}`)
                     this.mergeResults(allResultsMap, results, isBatch, episodeNumber, resolution)
@@ -279,7 +279,7 @@ class Provider {
         const broadTitle = sanitizedPrimary.split(" ").slice(0, 3).join(" ")
         if (broadTitle && broadTitle.length > 3) {
             const url = `${baseUrl}/torrents/search?query=${encodeURIComponent(broadTitle)}&sort_by=best&limit=50${batchParam}${videoCodecParam}`
-            const results = await this.tryQueryUrl(url)
+            const results = await this.tryQueryUrl(url, episodeNumber)
             if (results.length > 0) {
                 console.debug(`nekoBT: Broad fallback search succeeded: ${broadTitle}`)
                 this.mergeResults(allResultsMap, results, isBatch, episodeNumber, resolution)
@@ -308,10 +308,10 @@ class Provider {
         return null
     }
 
-    private async tryQueryUrl(url: string): Promise<AnimeTorrent[]> {
+    private async tryQueryUrl(url: string, epNum?: number): Promise<AnimeTorrent[]> {
         const response = await this.tryFullResponseUrl(url)
         if (response && response.data && Array.isArray(response.data.results)) {
-            return response.data.results.map(t => this.toAnimeTorrent(t))
+            return response.data.results.map(t => this.toAnimeTorrent(t, epNum))
         }
         return []
     }
@@ -419,7 +419,7 @@ class Provider {
         return results.filter(t => regex.test(t.name))
     }
 
-    private toAnimeTorrent(t: NekoBTTorrent): AnimeTorrent {
+    private toAnimeTorrent(t: NekoBTTorrent, expectedEp?: number): AnimeTorrent {
         let ts = 0;
         if (typeof t.uploaded_at === "number") {
             ts = t.uploaded_at;
@@ -434,18 +434,33 @@ class Provider {
             date = new Date().toISOString();
         }
 
+        // 1. Aggressive Resolution Extraction
         let resolution = "";
         const resMatch = t.title.match(/\b(2160p|4K|1080p|720p|480p|360p)\b/i);
-        if (resMatch) {
-            resolution = resMatch[1];
+        if (resMatch) resolution = resMatch[1].toLowerCase() === '4k' ? '2160p' : resMatch[1];
+
+        // 2. Aggressive Context-Aware Episode Extraction
+        let episodeNumber = -1;
+
+        if (expectedEp !== undefined && expectedEp !== null) {
+            // Aggressively search for the exact expected episode (padded or unpadded)
+            const epStr = expectedEp.toString();
+            const paddedEp = expectedEp < 10 ? `0${expectedEp}` : epStr;
+            // Matches " 1 ", " 01 ", "[01]", "- 01", "E01"
+            const targetRegex = new RegExp(`(?:^|[\\s_\\[\\-(])(?:EP?|E)?(?:${epStr}|${paddedEp})(?:v\\d)?(?:[\\s_\\]\\-)]|$)`, 'i');
+            
+            if (targetRegex.test(t.title)) {
+                episodeNumber = expectedEp;
+            }
         }
 
-        let episodeNumber = -1;
-        const epMatch = t.title.match(/(?:^|\s)(?!\d{4}\b)(?:EP?|Episode\s+)?(\d{1,4})(?:v\d)?(?:\s|\[|\(|$)/i);
-        if (epMatch) {
-            const ep = parseInt(epMatch[1], 10);
-            if (!isNaN(ep) && ep < 1900) { 
-                episodeNumber = ep;
+        // 3. Fallback generic extraction if expectedEp isn't provided or missed
+        if (episodeNumber === -1) {
+            // Strip resolutions and years so they aren't confused for episodes
+            const cleanTitle = t.title.replace(/\b(?:1080p|720p|480p|2160p|4k|2k|x264|x265|HEVC|AV1|19\d{2}|20\d{2})\b/ig, '');
+            const epMatch = cleanTitle.match(/(?:^|[\\s_\\[\\-(])(?:EP?|E)?0*(\d{1,4})(?:v\d)?(?:[\\s_\\]\\-)]|$)/i);
+            if (epMatch) {
+                episodeNumber = parseInt(epMatch[1], 10);
             }
         }
 
