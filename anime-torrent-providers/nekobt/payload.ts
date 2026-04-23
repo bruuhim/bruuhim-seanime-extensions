@@ -434,33 +434,36 @@ class Provider {
             date = new Date().toISOString();
         }
 
-        // 1. Aggressive Resolution Extraction
+        // 1. Simple Resolution Extraction
         let resolution = "";
-        const resMatch = t.title.match(/\b(2160p|4K|1080p|720p|480p|360p)\b/i);
-        if (resMatch) resolution = resMatch[1].toLowerCase() === '4k' ? '2160p' : resMatch[1];
+        if (t.title.includes("2160p") || t.title.includes("4K")) resolution = "2160p";
+        else if (t.title.includes("1080p")) resolution = "1080p";
+        else if (t.title.includes("720p")) resolution = "720p";
+        else if (t.title.includes("480p")) resolution = "480p";
 
-        // 2. Aggressive Context-Aware Episode Extraction
+        // 2. Compiler-Safe Episode Extraction
         let episodeNumber = -1;
-
         if (expectedEp !== undefined && expectedEp !== null) {
-            // Aggressively search for the exact expected episode (padded or unpadded)
             const epStr = expectedEp.toString();
-            const paddedEp = expectedEp < 10 ? `0${expectedEp}` : epStr;
-            // Matches " 1 ", " 01 ", "[01]", "- 01", "E01"
-            const targetRegex = new RegExp(`(?:^|[\\s_\\[\\-(])(?:EP?|E)?(?:${epStr}|${paddedEp})(?:v\\d)?(?:[\\s_\\]\\-)]|$)`, 'i');
+            const paddedEp = expectedEp < 10 ? "0" + epStr : epStr;
             
-            if (targetRegex.test(t.title)) {
+            // Simplified checks to avoid compiler syntax errors
+            const hasEp = t.title.includes(" " + epStr) || 
+                          t.title.includes(" " + paddedEp) || 
+                          t.title.includes("[" + paddedEp + "]") ||
+                          t.title.includes("-" + paddedEp) ||
+                          t.title.toLowerCase().includes("e" + paddedEp);
+                          
+            if (hasEp) {
                 episodeNumber = expectedEp;
             }
         }
 
-        // 3. Fallback generic extraction if expectedEp isn't provided or missed
+        // Fallback: If still -1, use a very basic regex that won't break the compiler
         if (episodeNumber === -1) {
-            // Strip resolutions and years so they aren't confused for episodes
-            const cleanTitle = t.title.replace(/\b(?:1080p|720p|480p|2160p|4k|2k|x264|x265|HEVC|AV1|19\d{2}|20\d{2})\b/ig, '');
-            const epMatch = cleanTitle.match(/(?:^|[\\s_\\[\\-(])(?:EP?|E)?0*(\d{1,4})(?:v\d)?(?:[\\s_\\]\\-)]|$)/i);
-            if (epMatch) {
-                episodeNumber = parseInt(epMatch[1], 10);
+            const simpleMatch = t.title.match(/[\s\-\[E]([0-9]{1,3})(\s|\]|$)/i);
+            if (simpleMatch) {
+                episodeNumber = parseInt(simpleMatch[1], 10);
             }
         }
 
