@@ -419,29 +419,34 @@ class Provider {
     }
 
     private toAnimeTorrent(t: NekoBTTorrent): AnimeTorrent {
-        const dateStr = t.uploaded_at || 0
-        const date = new Date(dateStr).toISOString()
+        let ts = 0;
+        if (typeof t.uploaded_at === "number") {
+            ts = t.uploaded_at;
+        } else if (typeof t.uploaded_at === "string") {
+            ts = parseInt(t.uploaded_at, 10);
+        }
         
-        const resMatch = t.title.match(/\b(2160p|4K|1080p|720p|480p|360p)\b/i)
-        const resolution = resMatch ? resMatch[1] : ""
-
-        const epMatch = t.title.match(/(?:^|\s|E|EP)(\d{1,3})(?:\s|v\d|$)/i)
-        const episodeNumber = epMatch ? parseInt(epMatch[1], 10) : -1
+        let date: string;
+        if (ts > 0 && !isNaN(ts)) {
+            date = new Date(ts).toISOString();
+        } else {
+            date = new Date().toISOString();
+        }
 
         return {
             name: t.title || "Unknown",
             date: date,
-            size: t.filesize || 0,
+            size: typeof t.filesize === "number" ? t.filesize : (parseInt(String(t.filesize ?? "0"), 10) || 0),
             formattedSize: "",
-            seeders: t.seeders || 0,
-            leechers: t.leechers || 0,
-            downloadCount: t.completed || 0,
+            seeders: typeof t.seeders === "number" ? t.seeders : (parseInt(String(t.seeders ?? "0"), 10) || 0),
+            leechers: typeof t.leechers === "number" ? t.leechers : (parseInt(String(t.leechers ?? "0"), 10) || 0),
+            downloadCount: typeof t.completed === "number" ? t.completed : (parseInt(String(t.completed ?? "0"), 10) || 0),
             link: t.id ? `https://nekobt.to/torrents/${t.id}` : "",
             magnetLink: t.magnet || undefined,
             infoHash: t.infohash ? t.infohash.toLowerCase() : undefined,
-            resolution: resolution,
+            resolution: "",
             isBatch: !!t.batch,
-            episodeNumber: episodeNumber,
+            episodeNumber: -1,
             releaseGroup: (Array.isArray(t.groups) && t.groups.length > 0) ? t.groups[0].display_name : "",
             isBestRelease: false,
             confirmed: false,
