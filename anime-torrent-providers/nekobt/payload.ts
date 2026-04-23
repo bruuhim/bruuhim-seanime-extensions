@@ -3,14 +3,14 @@
 
 interface NekoBTTorrent {
     id: string
-    uploaded_at: string
+    uploaded_at: number
     title: string
     infohash: string
     magnet: string
     private_magnet: string | null
     media_id: string
     description?: string | null
-    filesize: string
+    filesize: number
     category?: number
     level: number
     otl: boolean
@@ -21,9 +21,9 @@ interface NekoBTTorrent {
     fsub_lang: string
     video_codec: number
     video_type: number
-    seeders: string
-    leechers: string
-    completed: string
+    seeders: number
+    leechers: number
+    completed: number
     groups: NekoBTGroup[]
     batch: boolean
     imported: string | null
@@ -89,10 +89,11 @@ class Provider {
 
     public async getLatest(): Promise<AnimeTorrent[]> {
         try {
-            console.log("nekoBT: Fetching latest torrents")
-            const url = `${this.getApiUrl()}/torrents/search?sort_by=latest&limit=50`
-            const torrents = await this.fetchTorrents(url)
-            return torrents.map(t => this.toAnimeTorrent(t))
+            console.debug("nekoBT: Fetching latest torrents")
+            const url = `${this.getApiUrl()}/torrents/search?sort_by=rss&limit=50`
+            const response = await this.tryFullResponseUrl(url)
+            if (!response || !response.data || !Array.isArray(response.data.results)) return []
+            return response.data.results.map(t => this.toAnimeTorrent(t))
         } catch (error) {
             console.error("nekoBT: Error fetching latest: " + (error as Error).message)
             return []
@@ -101,7 +102,7 @@ class Provider {
 
     public async search(opts: AnimeSearchOptions): Promise<AnimeTorrent[]> {
         try {
-            console.log(`nekoBT: Searching for "${opts.query}"`)
+            console.debug(`nekoBT: Searching for "${opts.query}"`)
             return this.executeSearchWaterfall(opts.media, opts.query, undefined, false, undefined)
         } catch (error) {
             console.error("nekoBT: Error in search: " + (error as Error).message)
@@ -114,7 +115,7 @@ class Provider {
             const isBatch = !!opts.batch
             const epNum = isBatch ? undefined : opts.episodeNumber
             
-            console.log(`nekoBT: Smart searching (batch: ${isBatch}, ep: ${epNum})...`)
+            console.debug(`nekoBT: Smart searching (batch: ${isBatch}, ep: ${epNum})...`)
             
             let results = await this.executeSearchWaterfall(opts.media, opts.query, opts.resolution, isBatch, epNum)
 
@@ -152,40 +153,90 @@ class Provider {
         
         const allResultsMap = new Map<string, RankedTorrent>()
         const baseUrl = this.getApiUrl()
-        const batchParam = isBatch ? "&batch=true" : ""
+        const batchParam = isBatch !== undefined ? `&batch=${isBatch}` : ""
+        
+        let videoCodecParam = ""
+        if (resolution) {
+            const r = resolution.toLowerCase()
+            if (r.includes("x265") || r.includes("hevc")) videoCodecParam = "&videocodec=1"
+            else if (r.includes("x264") || r.includes("avc")) videoCodecParam = "&videocodec=2"
+            else if (r.includes("av1")) videoCodecParam = "&videocodec=3"
+        }
 
-        // Strategy A: Direct/Sanitized Query + Media Recommendation Discovery
+        // TVDB ID Search
+        if (media.tvdbId) {
+            const url = `${baseUrl}/torrents/search?tvdbid=${media.tvdbId}&sort_by=best&limit=50${batchParam}${videoCodecParam}`
+            const response = await this.tryFullResponseUrl(url)
+            if (response && response.data && Array.isArray(response.data.results) && response.data.results.length > 0) {
+                console.debug(`nekoBT: TVDB ID search returned ${response.data.results.length} results.`)
+                this.mergeResults(allResultsMap, response.data.results.map(t => this.toAnimeTorrent(t)), isBatch, episodeNumber, resolution)
+                
+                if (response.data.results.length < 10 && response.data.more) {
+                    const response2 = await this.tryFullResponseUrl(`${url}&offset=50`)
+                    if (response2 && response2.data && Array.isArray(response2.data.results)) {
+                        this.mergeResults(allResultsMap, response2.data.results.map(t => this.toAnimeTorrent(t)), isBatch, episodeNumber, resolution)
+                    }
+                }
+                
+                return this.finalizeResults(allResultsMap)
+            }
+        }
+
         const primaryTitle = customQuery || media.romajiTitle || media.englishTitle || ""
         const sanitizedPrimary = this.sanitizeTitle(primaryTitle)
         
+        let discoveredMediaId: string | null = null
+
+        // Direct Title Query
         if (sanitizedPrimary) {
             const epSuffix = episodeNumber && episodeNumber > 0 ? ` ${episodeNumber}` : ""
             const resSuffix = resolution ? ` ${resolution}` : ""
             const query = `${sanitizedPrimary}${epSuffix}${resSuffix}`.trim()
             
-            const response = await this.tryFullResponse(query, baseUrl, batchParam)
+            const url = `${baseUrl}/torrents/search?query=${encodeURIComponent(query)}&sort_by=best&limit=50${batchParam}${videoCodecParam}`
+            const response = await this.tryFullResponseUrl(url)
+            
             if (response && response.data) {
+                discoveredMediaId = this.discoverMediaId(response, media)
+                
                 if (Array.isArray(response.data.results) && response.data.results.length > 0) {
-                    console.log(`nekoBT: Direct query returned ${response.data.results.length} results.`)
+                    console.debug(`nekoBT: Direct query returned ${response.data.results.length} results.`)
                     this.mergeResults(allResultsMap, response.data.results.map(t => this.toAnimeTorrent(t)), isBatch, episodeNumber, resolution)
-                    return this.finalizeResults(allResultsMap)
-                }
-
-                // Strategy B: Media ID Discovery Recovery
-                const mediaId = this.discoverMediaId(response, media)
-                if (mediaId) {
-                    console.log(`nekoBT: Found media recommendation ID: ${mediaId}`)
-                    const recovered = await this.tryMediaIdSearch(mediaId, baseUrl, batchParam, episodeNumber, resolution)
-                    if (recovered.length > 0) {
-                        console.log(`nekoBT: Media ID search recovery succeeded for: ${mediaId}`)
-                        this.mergeResults(allResultsMap, recovered, isBatch, episodeNumber, resolution)
-                        return this.finalizeResults(allResultsMap)
+                    
+                    if (response.data.results.length < 10 && response.data.more) {
+                        const response2 = await this.tryFullResponseUrl(`${url}&offset=50`)
+                        if (response2 && response2.data && Array.isArray(response2.data.results)) {
+                            this.mergeResults(allResultsMap, response2.data.results.map(t => this.toAnimeTorrent(t)), isBatch, episodeNumber, resolution)
+                        }
                     }
+                    return this.finalizeResults(allResultsMap)
                 }
             }
         }
 
-        // Strategy C: Alternative Titles Waterfall
+        // Media ID + Episode Filter
+        if (discoveredMediaId && episodeNumber && episodeNumber > 0) {
+            const url = `${baseUrl}/torrents/search?mediaid=${discoveredMediaId}&episodeids=${episodeNumber}&sort_by=best&limit=50${batchParam}${videoCodecParam}`
+            const results = await this.tryQueryUrl(url)
+            if (results.length > 0) {
+                console.debug(`nekoBT: Media ID + episode filter returned ${results.length} results.`)
+                this.mergeResults(allResultsMap, results, isBatch, episodeNumber, resolution)
+                return this.finalizeResults(allResultsMap)
+            }
+        }
+
+        // Media ID without Episode Filter
+        if (discoveredMediaId) {
+            const url = `${baseUrl}/torrents/search?mediaid=${discoveredMediaId}&sort_by=best&limit=50${batchParam}${videoCodecParam}`
+            const results = await this.tryQueryUrl(url)
+            if (results.length > 0) {
+                console.debug(`nekoBT: Media ID without episode filter returned ${results.length} results.`)
+                this.mergeResults(allResultsMap, results, isBatch, episodeNumber, resolution)
+                return this.finalizeResults(allResultsMap)
+            }
+        }
+
+        // Alternative Titles Waterfall
         const altTitles = [media.romajiTitle, media.englishTitle, ...(media.synonyms || [])]
             .filter(t => t && t !== primaryTitle)
             .filter((v, i, a) => a.indexOf(v) === i) as string[]
@@ -194,15 +245,16 @@ class Provider {
             const query = this.sanitizeTitle(title)
             if (!query) continue
 
-            const results = await this.tryQuery(query, baseUrl, batchParam)
+            const url = `${baseUrl}/torrents/search?query=${encodeURIComponent(query)}&sort_by=best&limit=50${batchParam}${videoCodecParam}`
+            const results = await this.tryQueryUrl(url)
             if (results.length > 0) {
-                console.log(`nekoBT: Alternative title search succeeded: ${query}`)
+                console.debug(`nekoBT: Alternative title search succeeded: ${query}`)
                 this.mergeResults(allResultsMap, results, isBatch, episodeNumber, resolution)
                 return this.finalizeResults(allResultsMap)
             }
         }
 
-        // Strategy D: Episode Formatting Retries
+        // Episode Formatting Retries
         if (episodeNumber && episodeNumber > 0) {
             const paddedEp = String(episodeNumber).padStart(2, "0")
             const variants = [
@@ -212,21 +264,23 @@ class Provider {
                 `${sanitizedPrimary} ep${episodeNumber}`
             ]
             for (const q of variants) {
-                const results = await this.tryQuery(q, baseUrl, batchParam)
+                const url = `${baseUrl}/torrents/search?query=${encodeURIComponent(q)}&sort_by=best&limit=50${batchParam}${videoCodecParam}`
+                const results = await this.tryQueryUrl(url)
                 if (results.length > 0) {
-                    console.log(`nekoBT: Episode variant search succeeded: ${q}`)
+                    console.debug(`nekoBT: Episode variant search succeeded: ${q}`)
                     this.mergeResults(allResultsMap, results, isBatch, episodeNumber, resolution)
                     return this.finalizeResults(allResultsMap)
                 }
             }
         }
 
-        // Strategy E: Broad Fallback (First 3 words)
+        // Broad Fallback (First 3 words)
         const broadTitle = sanitizedPrimary.split(" ").slice(0, 3).join(" ")
         if (broadTitle && broadTitle.length > 3) {
-            const results = await this.tryQuery(broadTitle, baseUrl, batchParam)
+            const url = `${baseUrl}/torrents/search?query=${encodeURIComponent(broadTitle)}&sort_by=best&limit=50${batchParam}${videoCodecParam}`
+            const results = await this.tryQueryUrl(url)
             if (results.length > 0) {
-                console.log(`nekoBT: Broad fallback search succeeded: ${broadTitle}`)
+                console.debug(`nekoBT: Broad fallback search succeeded: ${broadTitle}`)
                 this.mergeResults(allResultsMap, results, isBatch, episodeNumber, resolution)
                 return this.finalizeResults(allResultsMap)
             }
@@ -239,12 +293,10 @@ class Provider {
     private discoverMediaId(response: NekoBTSearchResponse, targetMedia: Media): string | null {
         if (!response.data) return null
 
-        // 1. Check Recommended Media (usually highest similarity)
         if (response.data.recommended_media && response.data.recommended_media.id) {
             return response.data.recommended_media.id
         }
 
-        // 2. Check Similar Media and pick best candidate
         if (Array.isArray(response.data.similar_media) && response.data.similar_media.length > 0) {
             const best = [...response.data.similar_media].sort((a, b) => (b.similarity || 0) - (a.similarity || 0))[0]
             if (best && (best.similarity || 0) > 0.6) {
@@ -255,38 +307,38 @@ class Provider {
         return null
     }
 
-    private async tryMediaIdSearch(mediaId: string, baseUrl: string, batchParam: string, epNum?: number, res?: string): Promise<AnimeTorrent[]> {
-        const epSuffix = epNum && epNum > 0 ? `&episode_ids=${epNum}` : ""
-        const url = `${baseUrl}/torrents/search?media_id=${mediaId}&sort_by=best&limit=50${batchParam}${epSuffix}`
-        
-        try {
-            const torrents = await this.fetchTorrents(url)
-            return torrents.map(t => this.toAnimeTorrent(t))
-        } catch (e) {
-            if (epSuffix) {
-                return this.tryMediaIdSearch(mediaId, baseUrl, batchParam)
-            }
-            return []
+    private async tryQueryUrl(url: string): Promise<AnimeTorrent[]> {
+        const response = await this.tryFullResponseUrl(url)
+        if (response && response.data && Array.isArray(response.data.results)) {
+            return response.data.results.map(t => this.toAnimeTorrent(t))
         }
+        return []
     }
 
-    private async tryQuery(query: string, baseUrl: string, batchParam: string): Promise<AnimeTorrent[]> {
-        const url = `${baseUrl}/torrents/search?query=${encodeURIComponent(query)}&sort_by=best&limit=50${batchParam}`
-        try {
-            const torrents = await this.fetchTorrents(url)
-            return torrents.map(t => this.toAnimeTorrent(t))
-        } catch (e) {
-            return []
-        }
-    }
-
-    private async tryFullResponse(query: string, baseUrl: string, batchParam: string): Promise<NekoBTSearchResponse | null> {
-        const url = `${baseUrl}/torrents/search?query=${encodeURIComponent(query)}&sort_by=best&limit=50${batchParam}`
+    private async tryFullResponseUrl(url: string): Promise<NekoBTSearchResponse | null> {
+        console.debug(`nekoBT: Fetching ${url}`)
         try {
             const res = await fetch(url)
-            if (!res.ok) return null
-            return await res.json() as NekoBTSearchResponse
+            if (res.status === 429) {
+                console.warn("nekoBT: Rate limit reached (HTTP 429)")
+                return null
+            }
+            if (!res.ok) {
+                console.error(`nekoBT: HTTP ${res.status}`)
+                return null
+            }
+            const json = await res.json() as any
+            if (!json || typeof json.data !== 'object') {
+                console.error("nekoBT: Unexpected API response format", json)
+                return null
+            }
+            if (json.error) {
+                console.error(`nekoBT: API error — ${json.message}`)
+                return null
+            }
+            return json as NekoBTSearchResponse
         } catch (e) {
+            console.error(`nekoBT: Fetch error: ${(e as Error).message}`)
             return null
         }
     }
@@ -329,9 +381,22 @@ class Provider {
                 }
             }
 
+            // Codec Match Bonus
+            if (res) {
+                const rLower = res.toLowerCase()
+                if ((rLower.includes("x265") || rLower.includes("hevc")) && (titleLower.includes("x265") || titleLower.includes("hevc"))) score += 300
+                if ((rLower.includes("x264") || rLower.includes("avc")) && (titleLower.includes("x264") || titleLower.includes("avc"))) score += 300
+                if (rLower.includes("av1") && titleLower.includes("av1")) score += 300
+            }
+
             // Batch Intent mismatch penalty
             if (isBatch && !r.isBatch) score -= 2000
             if (!isBatch && r.isBatch) score -= 2000
+
+            // Group quality signal
+            if (r.releaseGroup) score += 100
+
+            if (score > 1500) r.isBestRelease = true
 
             map.set(r.infoHash, {
                 torrent: r,
@@ -353,31 +418,30 @@ class Provider {
         return results.filter(t => regex.test(t.name))
     }
 
-    private async fetchTorrents(url: string): Promise<NekoBTTorrent[]> {
-        const res = await fetch(url)
-        if (!res.ok) throw new Error(`nekoBT: HTTP ${res.status}`)
-        const json = await res.json() as NekoBTSearchResponse
-        if (json.error) throw new Error(`nekoBT: API error — ${json.message}`)
-        return Array.isArray(json.data?.results) ? json.data.results : []
-    }
-
     private toAnimeTorrent(t: NekoBTTorrent): AnimeTorrent {
-        const dateStr = t.uploaded_at || "0"
-        const date = new Date(parseInt(dateStr, 10)).toISOString()
+        const dateStr = t.uploaded_at || 0
+        const date = new Date(dateStr).toISOString()
+        
+        const resMatch = t.title.match(/\b(2160p|4K|1080p|720p|480p|360p)\b/i)
+        const resolution = resMatch ? resMatch[1] : ""
+
+        const epMatch = t.title.match(/(?:^|\s|E|EP)(\d{1,3})(?:\s|v\d|$)/i)
+        const episodeNumber = epMatch ? parseInt(epMatch[1], 10) : -1
+
         return {
             name: t.title || "Unknown",
             date: date,
-            size: parseInt(t.filesize, 10) || 0,
+            size: t.filesize || 0,
             formattedSize: "",
-            seeders: parseInt(t.seeders, 10) || 0,
-            leechers: parseInt(t.leechers, 10) || 0,
-            downloadCount: parseInt(t.completed, 10) || 0,
+            seeders: t.seeders || 0,
+            leechers: t.leechers || 0,
+            downloadCount: t.completed || 0,
             link: t.id ? `https://nekobt.to/torrents/${t.id}` : "",
             magnetLink: t.magnet || undefined,
-            infoHash: t.infohash || undefined,
-            resolution: "",
+            infoHash: t.infohash ? t.infohash.toLowerCase() : undefined,
+            resolution: resolution,
             isBatch: !!t.batch,
-            episodeNumber: -1,
+            episodeNumber: episodeNumber,
             releaseGroup: (Array.isArray(t.groups) && t.groups.length > 0) ? t.groups[0].display_name : "",
             isBestRelease: false,
             confirmed: false,
