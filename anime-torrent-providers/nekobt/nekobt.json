@@ -3,7 +3,7 @@
   "name": "nekoBT",
   "description": "nekoBT torrent search provider for Seanime. Uses nekoBT search results and media fallback retries.",
   "manifestURI": "https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/anime-torrent-providers/nekobt/nekobt.json",
-  "version": "1.1.5",
+  "version": "1.1.6",
   "author": "bruuhim",
   "type": "anime-torrent-provider",
   "icon": "https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/assets/nekobt.png",
