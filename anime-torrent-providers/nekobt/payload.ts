@@ -183,14 +183,14 @@ class Provider {
         }
 
         const primaryTitle = customQuery || media.romajiTitle || media.englishTitle || ""
-        const sanitizedPrimary = this.sanitizeTitle(primaryTitle)
+        const sanitizedPrimary = customQuery ? customQuery.trim() : this.sanitizeTitle(primaryTitle)
         
         let discoveredMediaId: string | null = null
 
         // Direct Title Query
         if (sanitizedPrimary) {
-            const epSuffix = episodeNumber && episodeNumber > 0 ? ` ${episodeNumber}` : ""
-            const resSuffix = resolution ? ` ${resolution}` : ""
+            const epSuffix = (!customQuery && episodeNumber && episodeNumber > 0) ? ` ${episodeNumber}` : ""
+            const resSuffix = (!customQuery && resolution) ? ` ${resolution}` : ""
             const query = `${sanitizedPrimary}${epSuffix}${resSuffix}`.trim()
             
             const url = `${baseUrl}/torrents/search?query=${encodeURIComponent(query)}&sort_by=best&limit=50${batchParam}${videoCodecParam}`
@@ -440,10 +440,10 @@ class Provider {
         }
 
         let episodeNumber = -1;
-        const epMatch = t.title.match(/(?:-|E|EP|\[)\s*(\d{1,4})(?:v\d)?(?:\]|\s|$)/i);
+        const epMatch = t.title.match(/(?:^|\s)(?!\d{4}\b)(?:EP?|Episode\s+)?(\d{1,4})(?:v\d)?(?:\s|\[|\(|$)/i);
         if (epMatch) {
             const ep = parseInt(epMatch[1], 10);
-            if (!isNaN(ep) && ep < 2000) { 
+            if (!isNaN(ep) && ep < 1900) { 
                 episodeNumber = ep;
             }
         }
