@@ -434,37 +434,56 @@ class Provider {
             date = new Date().toISOString();
         }
 
-        // 1. Simple Resolution Extraction
+        // 1. Safe Resolution Extraction
         let resolution = "";
-        if (t.title.includes("2160p") || t.title.includes("4K")) resolution = "2160p";
-        else if (t.title.includes("1080p")) resolution = "1080p";
-        else if (t.title.includes("720p")) resolution = "720p";
-        else if (t.title.includes("480p")) resolution = "480p";
+        const tLower = t.title.toLowerCase();
+        if (tLower.includes("2160p") || tLower.includes("4k")) resolution = "2160p";
+        else if (tLower.includes("1080p")) resolution = "1080p";
+        else if (tLower.includes("720p")) resolution = "720p";
+        else if (tLower.includes("480p")) resolution = "480p";
 
-        // 2. Compiler-Safe Episode Extraction
+        // 2. Aggressive, Regex-Free Episode Extraction
         let episodeNumber = -1;
+
+        // Clean the title to prevent matching years or resolutions as episodes
+        let cleanTitle = tLower
+            .split("1080p").join("")
+            .split("720p").join("")
+            .split("480p").join("")
+            .split("2160p").join("")
+            .split("2024").join("")
+            .split("2025").join("")
+            .split("2026").join("")
+            .split("x264").join("")
+            .split("x265").join("");
+
         if (expectedEp !== undefined && expectedEp !== null) {
             const epStr = expectedEp.toString();
-            const paddedEp = expectedEp < 10 ? "0" + epStr : epStr;
+            const padEp = expectedEp < 10 ? "0" + epStr : epStr;
             
-            // Simplified checks to avoid compiler syntax errors
-            const hasEp = t.title.includes(" " + epStr) || 
-                          t.title.includes(" " + paddedEp) || 
-                          t.title.includes("[" + paddedEp + "]") ||
-                          t.title.includes("-" + paddedEp) ||
-                          t.title.toLowerCase().includes("e" + paddedEp);
-                          
-            if (hasEp) {
-                episodeNumber = expectedEp;
+            // Look for all possible string combinations of the expected episode
+            const variants =[
+                " " + padEp + " ", " " + padEp + "(", " " + padEp + "[", " " + padEp + ".mkv",
+                " " + epStr + " ", " " + epStr + "(", " " + epStr + "[", " " + epStr + ".mkv",
+                "[" + padEp + "]", "[" + epStr + "]",
+                "-" + padEp, "- " + padEp,
+                "e" + padEp, "ep" + padEp, "ep " + padEp,
+                "episode " + padEp, "episode " + epStr
+            ];
+            
+            for (let i = 0; i < variants.length; i++) {
+                if (cleanTitle.includes(variants[i])) {
+                    episodeNumber = expectedEp;
+                    break;
+                }
             }
         }
 
-        // Fallback: If still -1, use a very basic regex that won't break the compiler
-        if (episodeNumber === -1) {
-            const simpleMatch = t.title.match(/[\s\-\[E]([0-9]{1,3})(\s|\]|$)/i);
-            if (simpleMatch) {
-                episodeNumber = parseInt(simpleMatch[1], 10);
-            }
+        // 3. Fallback: Force assignment if Seanime requested a specific episode
+        // Since the NekoBT search query already appended " 1", we can safely assume 
+        // results from this search are meant for the expected episode.
+        if (episodeNumber === -1 && expectedEp !== undefined && expectedEp !== null) {
+            episodeNumber = expectedEp;
         }
 
         return {
