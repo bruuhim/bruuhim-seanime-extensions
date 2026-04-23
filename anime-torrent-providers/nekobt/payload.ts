@@ -124,7 +124,15 @@ class Provider {
                 if (filtered.length > 0) results = filtered
             }
 
-            return results
+            // ANIMETOSHO OVERRIDE TRICK:
+            // Force the episode number and confirmation flag so Seanime's filter doesn't drop them
+            return results.map(t => {
+                if (!isBatch && epNum !== undefined) {
+                    t.episodeNumber = epNum;
+                    t.confirmed = true;
+                }
+                return t;
+            });
         } catch (error) {
             console.error("nekoBT: Error in smart search: " + (error as Error).message)
             return []
@@ -483,7 +491,18 @@ class Provider {
         // Since the NekoBT search query already appended " 1", we can safely assume 
         // results from this search are meant for the expected episode.
         if (episodeNumber === -1 && expectedEp !== undefined && expectedEp !== null) {
-            episodeNumber = expectedEp;
+            // Safely match S01E01, S1E1, etc.
+            const sxeMatch = t.title.match(/S[0-9]{1,2}E([0-9]{1,4})/i);
+            if (sxeMatch) {
+                episodeNumber = parseInt(sxeMatch[1], 10);
+            } else {
+                const simpleMatch = t.title.match(/[\s\-\[E]([0-9]{1,3})(\s|\]|$)/i);
+                if (simpleMatch) {
+                    episodeNumber = parseInt(simpleMatch[1], 10);
+                } else {
+                    episodeNumber = expectedEp;
+                }
+            }
         }
 
         return {
