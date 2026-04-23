@@ -433,6 +433,21 @@ class Provider {
             date = new Date().toISOString();
         }
 
+        let resolution = "";
+        const resMatch = t.title.match(/\b(2160p|4K|1080p|720p|480p|360p)\b/i);
+        if (resMatch) {
+            resolution = resMatch[1];
+        }
+
+        let episodeNumber = -1;
+        const epMatch = t.title.match(/(?:-|E|EP|\[)\s*(\d{1,4})(?:v\d)?(?:\]|\s|$)/i);
+        if (epMatch) {
+            const ep = parseInt(epMatch[1], 10);
+            if (!isNaN(ep) && ep < 2000) { 
+                episodeNumber = ep;
+            }
+        }
+
         return {
             name: t.title || "Unknown",
             date: date,
@@ -444,12 +459,12 @@ class Provider {
             link: t.id ? `https://nekobt.to/torrents/${t.id}` : "",
             magnetLink: t.magnet || undefined,
             infoHash: t.infohash ? t.infohash.toLowerCase() : undefined,
-            resolution: "",
+            resolution: resolution,
             isBatch: !!t.batch,
-            episodeNumber: -1,
+            episodeNumber: episodeNumber,
             releaseGroup: (Array.isArray(t.groups) && t.groups.length > 0) ? t.groups[0].display_name : "",
             isBestRelease: false,
-            confirmed: false,
+            confirmed: (episodeNumber !== -1 || !!t.batch),
         }
     }
 
