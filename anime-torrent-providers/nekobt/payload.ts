@@ -253,7 +253,7 @@ if (!isBatch && epNum && epNum > 0) {
         const primaryTitle = validCustomQuery || media.romajiTitle || media.englishTitle || ""
         const sanitizedPrimary = validCustomQuery ? validCustomQuery : this.sanitizeTitle(primaryTitle)
 
-        // Step 3: Direct title query with pagination — query title only (no episode number appended), paginate to find enough ep matches
+        // Step 3: Direct title query with pagination ï¿½ query title only (no episode number appended), paginate to find enough ep matches
         if (sanitizedPrimary) {
             // Build query without episode number (just title + optional resolution)
             const resSuffix = (!validCustomQuery && resolution) ? ` ${resolution}` : ""
@@ -278,8 +278,15 @@ if (!isBatch && epNum && epNum > 0) {
                 allTitleResults = allTitleResults.concat(titleFiltered)
                 
 
+                // Guard against undefined episode (Batch mode)
+                if (episodeNumber === undefined || episodeNumber === null) {
+                    if (!response.data.more) break
+                    offset += 50
+                    continue
+                }
+
                 // Check how many match the target episode
-                const epMatches = episodeNumber ? this.countEpisodeMatches(allTitleResults, episodeNumber) : allTitleResults.length
+                const epMatches = this.countEpisodeMatches(allTitleResults, episodeNumber)
                 
 
                 // Stop if we have enough episode matches or no more pages
@@ -443,30 +450,33 @@ private async tryQueryUrl(url: string, epNum?: number): Promise<AnimeTorrent[]> 
 
     private filterByEpisode(results: AnimeTorrent[], epNum: number): AnimeTorrent[] {
         const ep = epNum
-        const filtered = results.filter(t => {
-            const title = t.name
-            // SxxEyy — match episode part only, not season part
-            const sxeMatch = title.match(/S\d+E(\d+)/i)
-            if (sxeMatch) return parseInt(sxeMatch[1], 10) === ep
-            // [EP01] or (EP01) or EP01 word boundary
-            const epTagMatch = title.match(/[\[(]?EP?(\d+)[\])]?/i)
-            if (epTagMatch) return parseInt(epTagMatch[1], 10) === ep
-            // " - 01" or " - 1 " style (fansub common format)
-            const dashMatch = title.match(/\s-\s*(\d+)\s*[\[(v\.]/)
-            if (dashMatch) return parseInt(dashMatch[1], 10) === ep
-            // bare number surrounded by spaces/brackets at end: "Title 01 [1080p]"
-            const bareMatch = title.match(/(?:^|\s)(\d{1,4})(?:\s|v\d|\[|\(|\.mkv|$)/i)
-            if (bareMatch) return parseInt(bareMatch[1], 10) === ep
-            return false
+        const epPatterns = [
+            new RegExp(`s\\d{1,2}e0*${ep}(?!\\d)`, "i"),   // S01E01
+            new RegExp(`e0*${ep}(?!\\d)`, "i"),              // E01 standalone
+            new RegExp(`[-_\\s]0*${ep}(?!\\d)`, "i"),        // - 01 or _01 or space01
+            new RegExp(`ep\\.?\\s*0*${ep}(?!\\d)`, "i"),     // ep01 or ep. 01
+            new RegExp(`episode\\s*0*${ep}(?!\\d)`, "i"),    // episode 01
+        ]
+        
+        return results.filter(t => {
+            const name = t.name.toLowerCase()
+            return epPatterns.some(p => p.test(name))
         })
+    }
 
-         — input: ${results.length}, output: ${filtered.length}`)
-        if (filtered.length < results.length) {
-            const dropped = results.filter(r => !filtered.includes(r)).slice(0, 5).map(r => r.name)
-            }`)
-        }
-
-        return filtered
+    private countEpisodeMatches(results: AnimeTorrent[], episodeNumber: number): number {
+        const ep = episodeNumber
+        const epPatterns = [
+            new RegExp(`s\\d{1,2}e0*${ep}(?!\\d)`, "i"),   // S01E01
+            new RegExp(`e0*${ep}(?!\\d)`, "i"),              // E01 standalone
+            new RegExp(`[-_\\s]0*${ep}(?!\\d)`, "i"),        // - 01 or _01 or space01
+            new RegExp(`ep\\.?\\s*0*${ep}(?!\\d)`, "i"),     // ep01 or ep. 01
+            new RegExp(`episode\\s*0*${ep}(?!\\d)`, "i"),    // episode 01
+        ]
+        return results.filter(t => {
+            const name = t.name.toLowerCase()
+            return epPatterns.some(p => p.test(name))
+        }).length
     }
 
     private toAnimeTorrent(t: NekoBTTorrent, expectedEp?: number): AnimeTorrent {
@@ -583,7 +593,7 @@ private async tryQueryUrl(url: string, epNum?: number): Promise<AnimeTorrent[]> 
                 }
             }
 
-            // Fallback: sliding window — check if 3+ consecutive words of any candidate appear in order
+            // Fallback: sliding window ï¿½ check if 3+ consecutive words of any candidate appear in order
             if (!pass) {
                 for (const candidate of normalizedCandidates) {
                     const words = candidate.split(" ").filter(w => w.length >= 3)
