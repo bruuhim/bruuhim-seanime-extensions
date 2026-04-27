@@ -363,7 +363,7 @@ class Provider {
         }
         if (Array.isArray(response.data.similar_media) && response.data.similar_media.length > 0) {
             const best = [...response.data.similar_media].sort((a, b) => (b.similarity || 0) - (a.similarity || 0))[0]
-            if (best && (best.similarity || 0) > 0.5) {
+            if (best && (best.similarity || 0) >= 0.5) {
                 return best.id
             }
         }
