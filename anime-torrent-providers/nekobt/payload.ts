@@ -289,8 +289,8 @@ if (!isBatch && epNum && epNum > 0) {
                 const epMatches = this.countEpisodeMatches(allTitleResults, episodeNumber)
                 
 
-                // Stop if we have enough episode matches or no more pages
-                if (epMatches >= 5 || !response.data.more) break
+                // Stop only if no more pages
+                if (!response.data.more) break
                 offset += 50
             }
 
