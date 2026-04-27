@@ -607,37 +607,56 @@ if (!isBatch && epNum && epNum > 0) {
             .replace(/\s+/g, " ")
             .trim()
 
-        const normalizedCandidates = candidates.map(normalize)
-        const titleWords = new Set<string>()
-        for (const c of normalizedCandidates) {
-            for (const w of c.split(" ")) {
-                if (w.length >= 3) titleWords.add(w)
-            }
-        }
+        // Stop words to exclude — these appear in too many unrelated strings
+        const STOP_WORDS = new Set(["the","and","are","you","for","was","its","his","her","not","but","all","can","had","has","have","this","that","with","from","they","will","been","one","into","who","how","our","out","about","also","just","more","than","when","what","then","very","your","would","could","should","him","them","their","been","were","after"])
 
-        console.debug(`nekoBT: filterByMediaTitle — candidates: ${JSON.stringify(candidates)}, titleWords: ${JSON.stringify([...titleWords])}`)
+        // Build significant word sets per candidate — only words ≥4 chars and not stop words
+        const candidateSets = candidates.map(c => {
+            const words = normalize(c).split(" ").filter(w => w.length >= 4 && !STOP_WORDS.has(w))
+            return new Set(words)
+        })
 
-        if (titleWords.size === 0) return results
+        // Remove empty sets
+        const validSets = candidateSets.filter(s => s.size > 0)
+        if (validSets.length === 0) return results
+
+        console.debug(`nekoBT: filterByMediaTitle — significant word sets: ${JSON.stringify(validSets.map(s => [...s]))}`)
 
         const passed: AnimeTorrent[] = []
         const rejected: string[] = []
 
         for (const t of results) {
             const norm = normalize(t.name)
-            let matches = 0
-            for (const w of titleWords) {
-                if (norm.includes(w)) matches++
+
+            // A torrent passes if it matches ANY candidate's words with ≥50% overlap
+            let pass = false
+            for (const wordSet of validSets) {
+                let matches = 0
+                for (const w of wordSet) {
+                    if (norm.includes(w)) matches++
+                }
+                const ratio = matches / wordSet.size
+                // Need at least 2 matching significant words AND ≥50% of that candidate's words
+                if (matches >= 2 && ratio >= 0.5) {
+                    pass = true
+                    break
+                }
             }
-            const ratio = matches / titleWords.size
-            if (matches >= 2 || ratio >= 0.4) {
+
+            if (pass) {
                 passed.push(t)
             } else {
-                rejected.push(`"${t.name}" (matches=${matches}/${titleWords.size})`)
+                rejected.push(`"${t.name}"`)
             }
         }
 
         console.debug(`nekoBT: filterByMediaTitle — passed: ${passed.length}, rejected: ${rejected.length}`)
-        if (rejected.length > 0) console.debug(`nekoBT: filterByMediaTitle — rejected: ${JSON.stringify(rejected.slice(0, 10))}`)
+
+        // Safety: if we filtered too aggressively (< 3 passed), return all results unfiltered
+        if (passed.length < 3) {
+            console.debug(`nekoBT: filterByMediaTitle — too few passed (${passed.length}), returning all ${results.length} unfiltered`)
+            return results
+        }
 
         return passed
     }
