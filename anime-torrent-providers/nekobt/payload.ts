@@ -261,13 +261,30 @@ class Provider {
                 if (Array.isArray(response.data.results) && response.data.results.length > 0) {
                     console.debug(`nekoBT: Direct query returned ${response.data.results.length} results.`)
 
-                    this.mergeResults(allResultsMap, response.data.results.map(t => this.toAnimeTorrent(t, episodeNumber)), isBatch, episodeNumber, resolution)
-                    if (response.data.results.length < 10 && response.data.more) {
-                        const response2 = await this.tryFullResponseUrl(`${url}&offset=50`)
-                        if (response2 && response2.data && Array.isArray(response2.data.results)) {
-                            this.mergeResults(allResultsMap, response2.data.results.map(t => this.toAnimeTorrent(t, episodeNumber)), isBatch, episodeNumber, resolution)
+                    // Follow-up: use media_id from first result for a full series mediaid search.
+                    // The title query is sorted by "best" and capped at 50 — early episodes can rank
+                    // below later ones and fall off the list. A mediaid search returns all torrents
+                    // for the series, giving filterByEpisode the complete pool to narrow from.
+                    const firstResultMediaId = response.data.results[0].media_id
+                    if (firstResultMediaId) {
+                        const followUpUrl = `${baseUrl}/torrents/search?mediaid=${firstResultMediaId}&sort_by=best&limit=50${batchParam}${videoCodecParam}`
+                        const followUpResponse = await this.tryFullResponseUrl(followUpUrl)
+                        if (followUpResponse && followUpResponse.data && Array.isArray(followUpResponse.data.results) && followUpResponse.data.results.length > 0) {
+                            console.debug(`nekoBT: mediaid follow-up returned ${followUpResponse.data.results.length} results.`)
+                            this.mergeResults(allResultsMap, followUpResponse.data.results.map(t => this.toAnimeTorrent(t, episodeNumber)), isBatch, episodeNumber, resolution)
+                            if (followUpResponse.data.more) {
+                                const followUpResponse2 = await this.tryFullResponseUrl(`${followUpUrl}&offset=50`)
+                                if (followUpResponse2 && followUpResponse2.data && Array.isArray(followUpResponse2.data.results)) {
+                                    console.debug(`nekoBT: mediaid follow-up page 2 returned ${followUpResponse2.data.results.length} results.`)
+                                    this.mergeResults(allResultsMap, followUpResponse2.data.results.map(t => this.toAnimeTorrent(t, episodeNumber)), isBatch, episodeNumber, resolution)
+                                }
+                            }
+                            return this.finalizeResults(allResultsMap)
                         }
                     }
+
+                    // Follow-up returned nothing — fall back to original title query results
+                    this.mergeResults(allResultsMap, response.data.results.map(t => this.toAnimeTorrent(t, episodeNumber)), isBatch, episodeNumber, resolution)
                     return this.finalizeResults(allResultsMap)
                 }
             }
