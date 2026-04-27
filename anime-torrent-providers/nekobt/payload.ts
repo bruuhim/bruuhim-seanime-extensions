@@ -215,10 +215,16 @@ class Provider {
         const resolvedMediaId = await this.resolveNbtMediaId(media)
         if (resolvedMediaId) {
             const url = `${baseUrl}/torrents/search?mediaid=${resolvedMediaId}&sort_by=best&limit=50${batchParam}${videoCodecParam}`
-            const results = await this.tryQueryUrl(url, episodeNumber)
-            if (results.length > 0) {
-                console.debug(`nekoBT: Mapped media ID returned ${results.length} results.`)
-                this.mergeResults(allResultsMap, results, isBatch, episodeNumber, resolution)
+            const response1 = await this.tryFullResponseUrl(url)
+            if (response1 && response1.data && Array.isArray(response1.data.results) && response1.data.results.length > 0) {
+                console.debug(`nekoBT: Mapped media ID returned ${response1.data.results.length} results.`)
+                this.mergeResults(allResultsMap, response1.data.results.map(t => this.toAnimeTorrent(t, episodeNumber)), isBatch, episodeNumber, resolution)
+                if (response1.data.more) {
+                    const response1p2 = await this.tryFullResponseUrl(`${url}&offset=50`)
+                    if (response1p2 && response1p2.data && Array.isArray(response1p2.data.results)) {
+                        this.mergeResults(allResultsMap, response1p2.data.results.map(t => this.toAnimeTorrent(t, episodeNumber)), isBatch, episodeNumber, resolution)
+                    }
+                }
                 return this.finalizeResults(allResultsMap)
             }
         }
@@ -244,9 +250,7 @@ class Provider {
         const primaryTitle = validCustomQuery || media.romajiTitle || media.englishTitle || ""
         const sanitizedPrimary = validCustomQuery ? validCustomQuery : this.sanitizeTitle(primaryTitle)
 
-        let discoveredMediaId: string | null = null
-
-        // Step 3: Direct title query — also attempt to discover NekoBT media ID from response
+        // Step 3: Direct title query — validate mediaId from response before follow-up
         if (sanitizedPrimary) {
             const epSuffix = (!validCustomQuery && episodeNumber && episodeNumber > 0) ? ` ${episodeNumber}` : ""
             const resSuffix = (!validCustomQuery && resolution) ? ` ${resolution}` : ""
@@ -256,18 +260,15 @@ class Provider {
             const response = await this.tryFullResponseUrl(url)
 
             if (response && response.data) {
-                discoveredMediaId = this.discoverMediaId(response)
-
                 if (Array.isArray(response.data.results) && response.data.results.length > 0) {
                     console.debug(`nekoBT: Direct query returned ${response.data.results.length} results.`)
 
-                    // Follow-up: use media_id from first result for a full series mediaid search.
-                    // The title query is sorted by "best" and capped at 50 — early episodes can rank
-                    // below later ones and fall off the list. A mediaid search returns all torrents
-                    // for the series, giving filterByEpisode the complete pool to narrow from.
-                    const firstResultMediaId = response.data.results[0].media_id
-                    if (firstResultMediaId) {
-                        const followUpUrl = `${baseUrl}/torrents/search?mediaid=${firstResultMediaId}&sort_by=best&limit=50${batchParam}${videoCodecParam}`
+                    // Validate media ID before follow-up to avoid poisoning from wrong first result.
+                    // Priority: recommended_media (NekoBT's own pick) → similar_media ≥ 0.7 → majority vote ≥ 60%
+                    const confirmedMediaId = this.resolveConfirmedMediaId(response)
+
+                    if (confirmedMediaId) {
+                        const followUpUrl = `${baseUrl}/torrents/search?mediaid=${confirmedMediaId}&sort_by=best&limit=50${batchParam}${videoCodecParam}`
                         const followUpResponse = await this.tryFullResponseUrl(followUpUrl)
                         if (followUpResponse && followUpResponse.data && Array.isArray(followUpResponse.data.results) && followUpResponse.data.results.length > 0) {
                             console.debug(`nekoBT: mediaid follow-up returned ${followUpResponse.data.results.length} results.`)
@@ -283,25 +284,14 @@ class Provider {
                         }
                     }
 
-                    // Follow-up returned nothing — fall back to original title query results
+                    // No confirmed mediaId or follow-up returned nothing — use title query results as-is
                     this.mergeResults(allResultsMap, response.data.results.map(t => this.toAnimeTorrent(t, episodeNumber)), isBatch, episodeNumber, resolution)
                     return this.finalizeResults(allResultsMap)
                 }
             }
         }
 
-        // Step 4: Discovered media ID waterfall
-        if (discoveredMediaId) {
-            const url = `${baseUrl}/torrents/search?mediaid=${discoveredMediaId}&sort_by=best&limit=50${batchParam}${videoCodecParam}`
-            const results = await this.tryQueryUrl(url, episodeNumber)
-            if (results.length > 0) {
-                console.debug(`nekoBT: Discovered media ID search returned ${results.length} results.`)
-                this.mergeResults(allResultsMap, results, isBatch, episodeNumber, resolution)
-                return this.finalizeResults(allResultsMap)
-            }
-        }
-
-        // Step 5: Alternative titles waterfall
+        // Step 4: Alternative titles waterfall
         const altTitles = [media.romajiTitle, media.englishTitle, ...(media.synonyms || [])]
             .filter(t => t && t !== primaryTitle)
             .filter((v, i, a) => a.indexOf(v) === i) as string[]
@@ -318,7 +308,7 @@ class Provider {
             }
         }
 
-        // Step 6: Episode formatting retries
+        // Step 5: Episode formatting retries
         if (episodeNumber && episodeNumber > 0) {
             const paddedEp = String(episodeNumber).padStart(2, "0")
             const variants = [
@@ -338,7 +328,7 @@ class Provider {
             }
         }
 
-        // Step 7: Broad fallback (first 3 words)
+        // Step 6: Broad fallback (first 3 words)
         const broadTitle = sanitizedPrimary.split(" ").slice(0, 3).join(" ")
         if (broadTitle && broadTitle.length > 3) {
             const url = `${baseUrl}/torrents/search?query=${encodeURIComponent(broadTitle)}&sort_by=best&limit=50${batchParam}${videoCodecParam}`
@@ -354,17 +344,42 @@ class Provider {
         return []
     }
 
-    private discoverMediaId(response: NekoBTSearchResponse): string | null {
+    // Validate and resolve a NekoBT media ID from a search response.
+    // Priority: recommended_media (NekoBT's own pick) → similar_media ≥ 0.7 → majority vote ≥ 60%
+    // Returns null if no confident match is found, preventing follow-up with wrong media.
+    private resolveConfirmedMediaId(response: NekoBTSearchResponse): string | null {
         if (!response.data) return null
+
+        // 1. NekoBT's own recommendation — highest confidence
         if (response.data.recommended_media?.id) {
+            console.debug(`nekoBT: Using recommended_media ID: ${response.data.recommended_media.id}`)
             return response.data.recommended_media.id
         }
+
+        // 2. Best similar_media entry with similarity ≥ 0.7
         if (Array.isArray(response.data.similar_media) && response.data.similar_media.length > 0) {
             const best = [...response.data.similar_media].sort((a, b) => (b.similarity || 0) - (a.similarity || 0))[0]
-            if (best && (best.similarity || 0) >= 0.5) {
+            if (best && (best.similarity || 0) >= 0.7) {
+                console.debug(`nekoBT: Using similar_media ID: ${best.id} (similarity ${best.similarity})`)
                 return best.id
             }
         }
+
+        // 3. Majority vote across all result media_ids — use if top candidate ≥ 60% of results
+        const results = response.data.results
+        if (!Array.isArray(results) || results.length === 0) return null
+
+        const counts: Record<string, number> = {}
+        for (const t of results) {
+            if (t.media_id) counts[t.media_id] = (counts[t.media_id] || 0) + 1
+        }
+        const topId = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0]
+        if (topId && counts[topId] / results.length >= 0.6) {
+            console.debug(`nekoBT: Using majority-vote media ID: ${topId} (${counts[topId]}/${results.length} results)`)
+            return topId
+        }
+
+        console.debug(`nekoBT: Could not confirm media ID — skipping follow-up`)
         return null
     }
 
