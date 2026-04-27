@@ -254,7 +254,7 @@ if (!isBatch && epNum && epNum > 0) {
         const primaryTitle = validCustomQuery || media.romajiTitle || media.englishTitle || ""
         const sanitizedPrimary = validCustomQuery ? validCustomQuery : this.sanitizeTitle(primaryTitle)
 
-        // Step 3: Direct title query — validate mediaId from response before follow-up
+        // Step 3: Direct title query — no mediaid follow-up, rely on title query results filtered by title similarity
         if (sanitizedPrimary) {
             const epSuffix = (!validCustomQuery && episodeNumber && episodeNumber > 0) ? ` ${episodeNumber}` : ""
             const resSuffix = (!validCustomQuery && resolution) ? ` ${resolution}` : ""
@@ -267,32 +267,10 @@ if (!isBatch && epNum && epNum > 0) {
                 if (Array.isArray(response.data.results) && response.data.results.length > 0) {
                     console.debug(`nekoBT: Direct query returned ${response.data.results.length} results.`)
 
-                    // Validate media ID before follow-up to avoid poisoning from wrong first result.
-                    // Priority: recommended_media (NekoBT's own pick) → similar_media ≥ 0.7 → majority vote ≥ 60%
-                    const confirmedMediaId = this.resolveConfirmedMediaId(response)
-
-                    if (confirmedMediaId) {
-                        const followUpUrl = `${baseUrl}/torrents/search?mediaid=${confirmedMediaId}&sort_by=best&limit=50${batchParam}${videoCodecParam}`
-                        const followUpResponse = await this.tryFullResponseUrl(followUpUrl)
-                        if (followUpResponse && followUpResponse.data && Array.isArray(followUpResponse.data.results) && followUpResponse.data.results.length > 0) {
-                            console.debug(`nekoBT: mediaid follow-up returned ${followUpResponse.data.results.length} results.`)
-                            let followUpResults = followUpResponse.data.results.map(t => this.toAnimeTorrent(t, episodeNumber))
-                            if (followUpResponse.data.more) {
-                                const followUpResponse2 = await this.tryFullResponseUrl(`${followUpUrl}&offset=50`)
-                                if (followUpResponse2 && followUpResponse2.data && Array.isArray(followUpResponse2.data.results)) {
-                                    console.debug(`nekoBT: mediaid follow-up page 2 returned ${followUpResponse2.data.results.length} results.`)
-                                    followUpResults = followUpResults.concat(followUpResponse2.data.results.map(t => this.toAnimeTorrent(t, episodeNumber)))
-                                }
-                            }
-                            const titleFiltered = this.filterByMediaTitle(followUpResults, media)
-                            const toUse = titleFiltered.length > 0 ? titleFiltered : followUpResults
-                            this.mergeResults(allResultsMap, toUse, isBatch, episodeNumber, resolution)
-                            return this.finalizeResults(allResultsMap)
-                        }
-                    }
-
-                    // No confirmed mediaId or follow-up returned nothing — use title query results as-is
-                    this.mergeResults(allResultsMap, response.data.results.map(t => this.toAnimeTorrent(t, episodeNumber)), isBatch, episodeNumber, resolution)
+                    // Filter title query results by media title similarity, then return
+                    const titleFiltered = this.filterByMediaTitle(response.data.results.map(t => this.toAnimeTorrent(t, episodeNumber)), media)
+                    const toUse = titleFiltered.length > 0 ? titleFiltered : response.data.results.map(t => this.toAnimeTorrent(t, episodeNumber))
+                    this.mergeResults(allResultsMap, toUse, isBatch, episodeNumber, resolution)
                     return this.finalizeResults(allResultsMap)
                 }
             }
@@ -351,46 +329,7 @@ if (!isBatch && epNum && epNum > 0) {
         return []
     }
 
-    // Validate and resolve a NekoBT media ID from a search response.
-    // Priority: recommended_media (NekoBT's own pick) → similar_media ≥ 0.7 → majority vote ≥ 60%
-    // Returns null if no confident match is found, preventing follow-up with wrong media.
-    private resolveConfirmedMediaId(response: NekoBTSearchResponse): string | null {
-        if (!response.data) return null
-
-        // 1. NekoBT's own recommendation — highest confidence
-        if (response.data.recommended_media?.id) {
-            console.debug(`nekoBT: Using recommended_media ID: ${response.data.recommended_media.id}`)
-            return response.data.recommended_media.id
-        }
-
-        // 2. Best similar_media entry with similarity ≥ 0.7
-        if (Array.isArray(response.data.similar_media) && response.data.similar_media.length > 0) {
-            const best = [...response.data.similar_media].sort((a, b) => (b.similarity || 0) - (a.similarity || 0))[0]
-            if (best && (best.similarity || 0) >= 0.7) {
-                console.debug(`nekoBT: Using similar_media ID: ${best.id} (similarity ${best.similarity})`)
-                return best.id
-            }
-        }
-
-        // 3. Majority vote across all result media_ids — use if top candidate ≥ 60% of results
-        const results = response.data.results
-        if (!Array.isArray(results) || results.length === 0) return null
-
-        const counts: Record<string, number> = {}
-        for (const t of results) {
-            if (t.media_id) counts[t.media_id] = (counts[t.media_id] || 0) + 1
-        }
-        const topId = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0]
-        if (topId && counts[topId] / results.length >= 0.6) {
-            console.debug(`nekoBT: Using majority-vote media ID: ${topId} (${counts[topId]}/${results.length} results)`)
-            return topId
-        }
-
-        console.debug(`nekoBT: Could not confirm media ID — skipping follow-up`)
-        return null
-    }
-
-    private async tryQueryUrl(url: string, epNum?: number): Promise<AnimeTorrent[]> {
+private async tryQueryUrl(url: string, epNum?: number): Promise<AnimeTorrent[]> {
         const response = await this.tryFullResponseUrl(url)
         if (response && response.data && Array.isArray(response.data.results)) {
             return response.data.results.map(t => this.toAnimeTorrent(t, epNum))
@@ -607,20 +546,9 @@ if (!isBatch && epNum && epNum > 0) {
             .replace(/\s+/g, " ")
             .trim()
 
-        // Stop words to exclude — these appear in too many unrelated strings
-        const STOP_WORDS = new Set(["the","and","are","you","for","was","its","his","her","not","but","all","can","had","has","have","this","that","with","from","they","will","been","one","into","who","how","our","out","about","also","just","more","than","when","what","then","very","your","would","could","should","him","them","their","been","were","after"])
+        const normalizedCandidates = candidates.map(normalize)
 
-        // Build significant word sets per candidate — only words ≥4 chars and not stop words
-        const candidateSets = candidates.map(c => {
-            const words = normalize(c).split(" ").filter(w => w.length >= 4 && !STOP_WORDS.has(w))
-            return new Set(words)
-        })
-
-        // Remove empty sets
-        const validSets = candidateSets.filter(s => s.size > 0)
-        if (validSets.length === 0) return results
-
-        console.debug(`nekoBT: filterByMediaTitle — significant word sets: ${JSON.stringify(validSets.map(s => [...s]))}`)
+        console.debug(`nekoBT: filterByMediaTitle — normalized candidates: ${JSON.stringify(normalizedCandidates)}`)
 
         const passed: AnimeTorrent[] = []
         const rejected: string[] = []
@@ -628,33 +556,46 @@ if (!isBatch && epNum && epNum > 0) {
         for (const t of results) {
             const norm = normalize(t.name)
 
-            // A torrent passes if it matches ANY candidate's words with ≥50% overlap
+            // Check if any candidate title appears as a substring in the torrent name
             let pass = false
-            for (const wordSet of validSets) {
-                let matches = 0
-                for (const w of wordSet) {
-                    if (norm.includes(w)) matches++
-                }
-                const ratio = matches / wordSet.size
-                // Need at least 2 matching significant words AND ≥50% of that candidate's words
-                if (matches >= 2 && ratio >= 0.5) {
+            for (const candidate of normalizedCandidates) {
+                if (norm.includes(candidate)) {
                     pass = true
                     break
+                }
+            }
+
+            // Fallback: sliding window — check if 3+ consecutive words of any candidate appear in order
+            if (!pass) {
+                for (const candidate of normalizedCandidates) {
+                    const words = candidate.split(" ").filter(w => w.length >= 3)
+                    if (words.length < 3) continue
+                    // Check all windows of 3 consecutive words
+                    for (let i = 0; i <= words.length - 3; i++) {
+                        const window = words.slice(i, i + 3)
+                        // All 3 consecutive words must appear in the torrent name
+                        if (window.every(w => norm.includes(w))) {
+                            pass = true
+                            break
+                        }
+                    }
+                    if (pass) break
                 }
             }
 
             if (pass) {
                 passed.push(t)
             } else {
-                rejected.push(`"${t.name}"`)
+                rejected.push(t.name)
             }
         }
 
         console.debug(`nekoBT: filterByMediaTitle — passed: ${passed.length}, rejected: ${rejected.length}`)
+        if (rejected.length > 0) console.debug(`nekoBT: filterByMediaTitle — rejected sample: ${JSON.stringify(rejected.slice(0, 5))}`)
 
-        // Safety: if we filtered too aggressively (< 3 passed), return all results unfiltered
-        if (passed.length < 3) {
-            console.debug(`nekoBT: filterByMediaTitle — too few passed (${passed.length}), returning all ${results.length} unfiltered`)
+        // Safety: if fewer than 2 passed, return unfiltered
+        if (passed.length < 2) {
+            console.debug(`nekoBT: filterByMediaTitle — too few passed, returning unfiltered`)
             return results
         }
 
