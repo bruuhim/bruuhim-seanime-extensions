@@ -218,13 +218,15 @@ class Provider {
             const response1 = await this.tryFullResponseUrl(url)
             if (response1 && response1.data && Array.isArray(response1.data.results) && response1.data.results.length > 0) {
                 console.debug(`nekoBT: Mapped media ID returned ${response1.data.results.length} results.`)
-                this.mergeResults(allResultsMap, response1.data.results.map(t => this.toAnimeTorrent(t, episodeNumber)), isBatch, episodeNumber, resolution)
+                let step1Results = response1.data.results.map(t => this.toAnimeTorrent(t, episodeNumber))
                 if (response1.data.more) {
                     const response1p2 = await this.tryFullResponseUrl(`${url}&offset=50`)
                     if (response1p2 && response1p2.data && Array.isArray(response1p2.data.results)) {
-                        this.mergeResults(allResultsMap, response1p2.data.results.map(t => this.toAnimeTorrent(t, episodeNumber)), isBatch, episodeNumber, resolution)
+                        step1Results = step1Results.concat(response1p2.data.results.map(t => this.toAnimeTorrent(t, episodeNumber)))
                     }
                 }
+                const step1Filtered = this.filterByMediaTitle(step1Results, media)
+                this.mergeResults(allResultsMap, step1Filtered.length > 0 ? step1Filtered : step1Results, isBatch, episodeNumber, resolution)
                 return this.finalizeResults(allResultsMap)
             }
         }
@@ -272,14 +274,17 @@ class Provider {
                         const followUpResponse = await this.tryFullResponseUrl(followUpUrl)
                         if (followUpResponse && followUpResponse.data && Array.isArray(followUpResponse.data.results) && followUpResponse.data.results.length > 0) {
                             console.debug(`nekoBT: mediaid follow-up returned ${followUpResponse.data.results.length} results.`)
-                            this.mergeResults(allResultsMap, followUpResponse.data.results.map(t => this.toAnimeTorrent(t, episodeNumber)), isBatch, episodeNumber, resolution)
+                            let followUpResults = followUpResponse.data.results.map(t => this.toAnimeTorrent(t, episodeNumber))
                             if (followUpResponse.data.more) {
                                 const followUpResponse2 = await this.tryFullResponseUrl(`${followUpUrl}&offset=50`)
                                 if (followUpResponse2 && followUpResponse2.data && Array.isArray(followUpResponse2.data.results)) {
                                     console.debug(`nekoBT: mediaid follow-up page 2 returned ${followUpResponse2.data.results.length} results.`)
-                                    this.mergeResults(allResultsMap, followUpResponse2.data.results.map(t => this.toAnimeTorrent(t, episodeNumber)), isBatch, episodeNumber, resolution)
+                                    followUpResults = followUpResults.concat(followUpResponse2.data.results.map(t => this.toAnimeTorrent(t, episodeNumber)))
                                 }
                             }
+                            const titleFiltered = this.filterByMediaTitle(followUpResults, media)
+                            const toUse = titleFiltered.length > 0 ? titleFiltered : followUpResults
+                            this.mergeResults(allResultsMap, toUse, isBatch, episodeNumber, resolution)
                             return this.finalizeResults(allResultsMap)
                         }
                     }
@@ -576,6 +581,45 @@ class Provider {
 
     private getApiUrl(): string {
         return this.defaultApiUrl
+    }
+
+    private filterByMediaTitle(results: AnimeTorrent[], media: Media): AnimeTorrent[] {
+        const candidates = [
+            media.romajiTitle,
+            media.englishTitle,
+            ...(media.synonyms || [])
+        ].filter(Boolean) as string[]
+
+        if (candidates.length === 0) return results
+
+        // Normalize: lowercase, strip punctuation, collapse spaces
+        const normalize = (s: string) => s.toLowerCase()
+            .replace(/[^\w\s]/g, " ")
+            .replace(/\s+/g, " ")
+            .trim()
+
+        const normalizedCandidates = candidates.map(normalize)
+
+        // Build a set of significant words (3+ chars) from all candidate titles
+        const titleWords = new Set<string>()
+        for (const c of normalizedCandidates) {
+            for (const w of c.split(" ")) {
+                if (w.length >= 3) titleWords.add(w)
+            }
+        }
+
+        if (titleWords.size === 0) return results
+
+        return results.filter(t => {
+            const norm = normalize(t.name)
+            // Count how many title words appear in the torrent name
+            let matches = 0
+            for (const w of titleWords) {
+                if (norm.includes(w)) matches++
+            }
+            // Require at least 2 matching words OR ≥40% of title words
+            return matches >= 2 || matches / titleWords.size >= 0.4
+        })
     }
 
     private sanitizeTitle(title: string): string {
