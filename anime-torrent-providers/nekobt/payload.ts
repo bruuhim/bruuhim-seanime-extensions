@@ -214,15 +214,6 @@ class Provider {
         // Step 1: Resolve NekoBT media ID via ThaUnknown's TVDB mapping
         const resolvedMediaId = await this.resolveNbtMediaId(media)
         if (resolvedMediaId) {
-            if (episodeNumber && episodeNumber > 0) {
-                const url = `${baseUrl}/torrents/search?mediaid=${resolvedMediaId}&episodeids=${episodeNumber}&sort_by=best&limit=50${batchParam}${videoCodecParam}`
-                const results = await this.tryQueryUrl(url, episodeNumber)
-                if (results.length > 0) {
-                    console.debug(`nekoBT: Mapped media ID + episode returned ${results.length} results.`)
-                    this.mergeResults(allResultsMap, results, isBatch, episodeNumber, resolution)
-                    return this.finalizeResults(allResultsMap)
-                }
-            }
             const url = `${baseUrl}/torrents/search?mediaid=${resolvedMediaId}&sort_by=best&limit=50${batchParam}${videoCodecParam}`
             const results = await this.tryQueryUrl(url, episodeNumber)
             if (results.length > 0) {
@@ -270,13 +261,13 @@ class Provider {
                 if (Array.isArray(response.data.results) && response.data.results.length > 0) {
                     console.debug(`nekoBT: Direct query returned ${response.data.results.length} results.`)
 
-                    // BUGFIX: Extract media_id and try follow-up with episode filter
+                    // BUGFIX: Extract media_id and try follow-up without episodeids (which is an internal ID, not an episode number)
                     const firstResultMediaId = response.data.results[0].media_id
                     if (firstResultMediaId && episodeNumber && episodeNumber > 0) {
-                        const followUpUrl = `${baseUrl}/torrents/search?mediaid=${firstResultMediaId}&episodeids=${episodeNumber}&sort_by=best&limit=50${batchParam}${videoCodecParam}`
+                        const followUpUrl = `${baseUrl}/torrents/search?mediaid=${firstResultMediaId}&sort_by=best&limit=50${batchParam}${videoCodecParam}`
                         const followUpResults = await this.tryQueryUrl(followUpUrl, episodeNumber)
                         if (followUpResults.length > 0) {
-                            console.debug(`nekoBT: Follow-up mediaid+episode search succeeded with ${followUpResults.length} results.`)
+                            console.debug(`nekoBT: Follow-up mediaid search succeeded with ${followUpResults.length} results.`)
                             this.mergeResults(allResultsMap, followUpResults, isBatch, episodeNumber, resolution)
                             return this.finalizeResults(allResultsMap)
                         }
@@ -294,29 +285,18 @@ class Provider {
             }
         }
 
-        // Step 4: Discovered media ID + episode filter
-        if (discoveredMediaId && episodeNumber && episodeNumber > 0) {
-            const url = `${baseUrl}/torrents/search?mediaid=${discoveredMediaId}&episodeids=${episodeNumber}&sort_by=best&limit=50${batchParam}${videoCodecParam}`
-            const results = await this.tryQueryUrl(url, episodeNumber)
-            if (results.length > 0) {
-                console.debug(`nekoBT: Discovered media ID + episode filter returned ${results.length} results.`)
-                this.mergeResults(allResultsMap, results, isBatch, episodeNumber, resolution)
-                return this.finalizeResults(allResultsMap)
-            }
-        }
-
-        // Step 5: Discovered media ID without episode filter
+        // Step 4: Discovered media ID waterfall
         if (discoveredMediaId) {
             const url = `${baseUrl}/torrents/search?mediaid=${discoveredMediaId}&sort_by=best&limit=50${batchParam}${videoCodecParam}`
             const results = await this.tryQueryUrl(url, episodeNumber)
             if (results.length > 0) {
-                console.debug(`nekoBT: Discovered media ID without episode filter returned ${results.length} results.`)
+                console.debug(`nekoBT: Discovered media ID search returned ${results.length} results.`)
                 this.mergeResults(allResultsMap, results, isBatch, episodeNumber, resolution)
                 return this.finalizeResults(allResultsMap)
             }
         }
 
-        // Step 6: Alternative titles waterfall
+        // Step 5: Alternative titles waterfall
         const altTitles = [media.romajiTitle, media.englishTitle, ...(media.synonyms || [])]
             .filter(t => t && t !== primaryTitle)
             .filter((v, i, a) => a.indexOf(v) === i) as string[]
@@ -333,7 +313,7 @@ class Provider {
             }
         }
 
-        // Step 7: Episode formatting retries
+        // Step 6: Episode formatting retries
         if (episodeNumber && episodeNumber > 0) {
             const paddedEp = String(episodeNumber).padStart(2, "0")
             const variants = [
@@ -353,7 +333,7 @@ class Provider {
             }
         }
 
-        // Step 8: Broad fallback (first 3 words)
+        // Step 7: Broad fallback (first 3 words)
         const broadTitle = sanitizedPrimary.split(" ").slice(0, 3).join(" ")
         if (broadTitle && broadTitle.length > 3) {
             const url = `${baseUrl}/torrents/search?query=${encodeURIComponent(broadTitle)}&sort_by=best&limit=50${batchParam}${videoCodecParam}`
