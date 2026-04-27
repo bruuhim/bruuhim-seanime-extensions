@@ -1,4 +1,4 @@
-/// <reference path="../../typing/anime-torrent-provider.d.ts" />
+﻿/// <reference path="../../typing/anime-torrent-provider.d.ts" />
 /// <reference path="../../typing/core.d.ts" />
 
 interface NekoBTTorrent {
@@ -269,6 +269,19 @@ class Provider {
 
                 if (Array.isArray(response.data.results) && response.data.results.length > 0) {
                     console.debug(`nekoBT: Direct query returned ${response.data.results.length} results.`)
+
+                    // BUGFIX: Extract media_id and try follow-up with episode filter
+                    const firstResultMediaId = response.data.results[0].media_id
+                    if (firstResultMediaId && episodeNumber && episodeNumber > 0) {
+                        const followUpUrl = `${baseUrl}/torrents/search?mediaid=${firstResultMediaId}&episodeids=${episodeNumber}&sort_by=best&limit=50${batchParam}${videoCodecParam}`
+                        const followUpResults = await this.tryQueryUrl(followUpUrl, episodeNumber)
+                        if (followUpResults.length > 0) {
+                            console.debug(`nekoBT: Follow-up mediaid+episode search succeeded with ${followUpResults.length} results.`)
+                            this.mergeResults(allResultsMap, followUpResults, isBatch, episodeNumber, resolution)
+                            return this.finalizeResults(allResultsMap)
+                        }
+                    }
+
                     this.mergeResults(allResultsMap, response.data.results.map(t => this.toAnimeTorrent(t, episodeNumber)), isBatch, episodeNumber, resolution)
                     if (response.data.results.length < 10 && response.data.more) {
                         const response2 = await this.tryFullResponseUrl(`${url}&offset=50`)
