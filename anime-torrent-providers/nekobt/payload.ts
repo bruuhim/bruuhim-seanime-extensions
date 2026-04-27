@@ -261,18 +261,6 @@ class Provider {
                 if (Array.isArray(response.data.results) && response.data.results.length > 0) {
                     console.debug(`nekoBT: Direct query returned ${response.data.results.length} results.`)
 
-                    // BUGFIX: Extract media_id and try follow-up without episodeids (which is an internal ID, not an episode number)
-                    const firstResultMediaId = response.data.results[0].media_id
-                    if (firstResultMediaId && episodeNumber && episodeNumber > 0) {
-                        const followUpUrl = `${baseUrl}/torrents/search?mediaid=${firstResultMediaId}&sort_by=best&limit=50${batchParam}${videoCodecParam}`
-                        const followUpResults = await this.tryQueryUrl(followUpUrl, episodeNumber)
-                        if (followUpResults.length > 0) {
-                            console.debug(`nekoBT: Follow-up mediaid search succeeded with ${followUpResults.length} results.`)
-                            this.mergeResults(allResultsMap, followUpResults, isBatch, episodeNumber, resolution)
-                            return this.finalizeResults(allResultsMap)
-                        }
-                    }
-
                     this.mergeResults(allResultsMap, response.data.results.map(t => this.toAnimeTorrent(t, episodeNumber)), isBatch, episodeNumber, resolution)
                     if (response.data.results.length < 10 && response.data.more) {
                         const response2 = await this.tryFullResponseUrl(`${url}&offset=50`)
@@ -458,9 +446,23 @@ class Provider {
     }
 
     private filterByEpisode(results: AnimeTorrent[], epNum: number): AnimeTorrent[] {
-        const epStr = String(epNum)
-        const regex = new RegExp(`(\\D|^)0*${epStr}(\\D|$)`, "i")
-        return results.filter(t => regex.test(t.name))
+        const ep = epNum
+        return results.filter(t => {
+            const title = t.name
+            // SxxEyy — match episode part only, not season part
+            const sxeMatch = title.match(/S\d+E(\d+)/i)
+            if (sxeMatch) return parseInt(sxeMatch[1], 10) === ep
+            // [EP01] or (EP01) or EP01 word boundary
+            const epTagMatch = title.match(/[\[(]?EP?(\d+)[\])]?/i)
+            if (epTagMatch) return parseInt(epTagMatch[1], 10) === ep
+            // " - 01" or " - 1 " style (fansub common format)
+            const dashMatch = title.match(/\s-\s*(\d+)\s*[\[(v\.]/)
+            if (dashMatch) return parseInt(dashMatch[1], 10) === ep
+            // bare number surrounded by spaces/brackets at end: "Title 01 [1080p]"
+            const bareMatch = title.match(/(?:^|\s)(\d{1,4})(?:\s|v\d|\[|\(|\.mkv|$)/i)
+            if (bareMatch) return parseInt(bareMatch[1], 10) === ep
+            return false
+        })
     }
 
     private toAnimeTorrent(t: NekoBTTorrent, expectedEp?: number): AnimeTorrent {
@@ -485,7 +487,7 @@ class Provider {
         if (sxeMatch) {
             episodeNumber = parseInt(sxeMatch[1], 10)
         } else {
-            const dashMatch = t.title.match(/-\s*([0-9]{1,4})\b/i)
+            const dashMatch = t.title.match(/\s-\s*(\d{1,4})(?:\s|v\d|\[|\(|\.)/i)
             if (dashMatch) {
                 episodeNumber = parseInt(dashMatch[1], 10)
             } else {
