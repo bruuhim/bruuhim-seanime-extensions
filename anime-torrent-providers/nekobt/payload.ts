@@ -254,25 +254,44 @@ if (!isBatch && epNum && epNum > 0) {
         const primaryTitle = validCustomQuery || media.romajiTitle || media.englishTitle || ""
         const sanitizedPrimary = validCustomQuery ? validCustomQuery : this.sanitizeTitle(primaryTitle)
 
-        // Step 3: Direct title query — no mediaid follow-up, rely on title query results filtered by title similarity
+        // Step 3: Direct title query with pagination — query title only (no episode number appended), paginate to find enough ep matches
         if (sanitizedPrimary) {
-            const epSuffix = (!validCustomQuery && episodeNumber && episodeNumber > 0) ? ` ${episodeNumber}` : ""
+            // Build query without episode number (just title + optional resolution)
             const resSuffix = (!validCustomQuery && resolution) ? ` ${resolution}` : ""
-            const query = `${sanitizedPrimary}${epSuffix}${resSuffix}`.trim()
+            const queryBase = `${sanitizedPrimary}${resSuffix}`.trim()
 
-            const url = `${baseUrl}/torrents/search?query=${encodeURIComponent(query)}&sort_by=best&limit=50${batchParam}${videoCodecParam}`
-            const response = await this.tryFullResponseUrl(url)
+            let allTitleResults: AnimeTorrent[] = []
+            let offset = 0
+            const MAX_PAGES = 3
 
-            if (response && response.data) {
-                if (Array.isArray(response.data.results) && response.data.results.length > 0) {
-                    console.debug(`nekoBT: Direct query returned ${response.data.results.length} results.`)
+            for (let page = 0; page < MAX_PAGES; page++) {
+                const pageParam = offset > 0 ? `&offset=${offset}` : ""
+                const url = `${baseUrl}/torrents/search?query=${encodeURIComponent(queryBase)}&sort_by=best&limit=50${batchParam}${videoCodecParam}${pageParam}`
+                console.debug(`nekoBT: Fetching title query page ${page + 1}: ${url}`)
+                const response = await this.tryFullResponseUrl(url)
 
-                    // Filter title query results by media title similarity, then return
-                    const titleFiltered = this.filterByMediaTitle(response.data.results.map(t => this.toAnimeTorrent(t, episodeNumber)), media)
-                    const toUse = titleFiltered.length > 0 ? titleFiltered : response.data.results.map(t => this.toAnimeTorrent(t, episodeNumber))
-                    this.mergeResults(allResultsMap, toUse, isBatch, episodeNumber, resolution)
-                    return this.finalizeResults(allResultsMap)
+                if (!response || !response.data || !Array.isArray(response.data.results) || response.data.results.length === 0) {
+                    break
                 }
+
+                const rawResults = response.data.results.map(t => this.toAnimeTorrent(t, episodeNumber))
+                const titleFiltered = this.filterByMediaTitle(rawResults, media)
+                allTitleResults = allTitleResults.concat(titleFiltered)
+                console.debug(`nekoBT: Title query page ${page + 1} — raw: ${rawResults.length}, after title filter: ${titleFiltered.length}, total so far: ${allTitleResults.length}`)
+
+                // Check how many match the target episode
+                const epMatches = episodeNumber ? this.countEpisodeMatches(allTitleResults, episodeNumber) : allTitleResults.length
+                console.debug(`nekoBT: Episode ${episodeNumber} matches so far: ${epMatches}`)
+
+                // Stop if we have enough episode matches or no more pages
+                if (epMatches >= 5 || !response.data.more) break
+                offset += 50
+            }
+
+            if (allTitleResults.length > 0) {
+                console.debug(`nekoBT: Title query total results: ${allTitleResults.length}`)
+                this.mergeResults(allResultsMap, allTitleResults, isBatch, episodeNumber, resolution)
+                return this.finalizeResults(allResultsMap)
             }
         }
 
@@ -600,6 +619,20 @@ private async tryQueryUrl(url: string, epNum?: number): Promise<AnimeTorrent[]> 
         }
 
         return passed
+    }
+
+    // Count how many results match a specific episode number (for pagination decision)
+    private countEpisodeMatches(results: AnimeTorrent[], episodeNumber: number): number {
+        return results.filter(t => {
+            const name = t.name.toLowerCase()
+            // SxxEyy pattern
+            if (new RegExp(`s\\d+e0*${episodeNumber}(?!\\d)`, "i").test(name)) return true
+            // dash format: " - 01"
+            if (new RegExp(`[-_\\s]0*${episodeNumber}(?!\\d)`, "i").test(name)) return true
+            // EP prefix
+            if (new RegExp(`ep\\.?\\s*0*${episodeNumber}(?!\\d)`, "i").test(name)) return true
+            return false
+        }).length
     }
 
     private sanitizeTitle(title: string): string {
