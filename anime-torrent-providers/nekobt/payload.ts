@@ -123,10 +123,12 @@ class Provider {
 
             let results = await this.executeSearchWaterfall(opts.media, opts.query, opts.resolution, isBatch, epNum)
 
-            if (!isBatch && epNum && epNum > 0) {
+if (!isBatch && epNum && epNum > 0) {
                 const filtered = this.filterByEpisode(results, epNum)
                 if (filtered.length > 0) results = filtered
             }
+
+            console.debug(`nekoBT: smartSearch final result count: ${results.length}`)
 
             return results
         } catch (error) {
@@ -484,7 +486,7 @@ class Provider {
 
     private filterByEpisode(results: AnimeTorrent[], epNum: number): AnimeTorrent[] {
         const ep = epNum
-        return results.filter(t => {
+        const filtered = results.filter(t => {
             const title = t.name
             // SxxEyy — match episode part only, not season part
             const sxeMatch = title.match(/S\d+E(\d+)/i)
@@ -500,6 +502,14 @@ class Provider {
             if (bareMatch) return parseInt(bareMatch[1], 10) === ep
             return false
         })
+
+        console.debug(`nekoBT: filterByEpisode(ep=${epNum}) — input: ${results.length}, output: ${filtered.length}`)
+        if (filtered.length < results.length) {
+            const dropped = results.filter(r => !filtered.includes(r)).slice(0, 5).map(r => r.name)
+            console.debug(`nekoBT: filterByEpisode — dropped examples: ${JSON.stringify(dropped)}`)
+        }
+
+        return filtered
     }
 
     private toAnimeTorrent(t: NekoBTTorrent, expectedEp?: number): AnimeTorrent {
@@ -592,15 +602,12 @@ class Provider {
 
         if (candidates.length === 0) return results
 
-        // Normalize: lowercase, strip punctuation, collapse spaces
         const normalize = (s: string) => s.toLowerCase()
             .replace(/[^\w\s]/g, " ")
             .replace(/\s+/g, " ")
             .trim()
 
         const normalizedCandidates = candidates.map(normalize)
-
-        // Build a set of significant words (3+ chars) from all candidate titles
         const titleWords = new Set<string>()
         for (const c of normalizedCandidates) {
             for (const w of c.split(" ")) {
@@ -608,18 +615,31 @@ class Provider {
             }
         }
 
+        console.debug(`nekoBT: filterByMediaTitle — candidates: ${JSON.stringify(candidates)}, titleWords: ${JSON.stringify([...titleWords])}`)
+
         if (titleWords.size === 0) return results
 
-        return results.filter(t => {
+        const passed: AnimeTorrent[] = []
+        const rejected: string[] = []
+
+        for (const t of results) {
             const norm = normalize(t.name)
-            // Count how many title words appear in the torrent name
             let matches = 0
             for (const w of titleWords) {
                 if (norm.includes(w)) matches++
             }
-            // Require at least 2 matching words OR ≥40% of title words
-            return matches >= 2 || matches / titleWords.size >= 0.4
-        })
+            const ratio = matches / titleWords.size
+            if (matches >= 2 || ratio >= 0.4) {
+                passed.push(t)
+            } else {
+                rejected.push(`"${t.name}" (matches=${matches}/${titleWords.size})`)
+            }
+        }
+
+        console.debug(`nekoBT: filterByMediaTitle — passed: ${passed.length}, rejected: ${rejected.length}`)
+        if (rejected.length > 0) console.debug(`nekoBT: filterByMediaTitle — rejected: ${JSON.stringify(rejected.slice(0, 10))}`)
+
+        return passed
     }
 
     private sanitizeTitle(title: string): string {
