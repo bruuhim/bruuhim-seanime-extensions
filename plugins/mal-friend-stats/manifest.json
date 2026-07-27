@@ -1,7 +1,7 @@
 {
   "id": "mal-friend-stats",
   "name": "MAL Friend Stats",
-  "version": "1.0.0",
+  "version": "0.0.1",
   "manifestURI": "https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/plugins/mal-friend-stats/manifest.json",
   "language": "typescript",
   "type": "plugin",
