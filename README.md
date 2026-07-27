@@ -33,6 +33,16 @@ These providers are optimized for stability, featuring AJAX fallbacks and Cloudf
 
 <br />
 
+## 🧩 Seanime Plugins
+
+Seanime plugin extensions that enhance your anime browsing experience directly within the Seanime app.
+
+| Plugin | Description | Installation Manifest (URL) |
+| :----- | :---------- | :-------------------------- |
+| **MAL Friend Stats** | Shows which of your MyAnimeList friends are watching or have rated the anime you're viewing | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/plugins/mal-friend-stats/manifest.json` |
+
+<br />
+
 ## 🧩 Featured Extensions
 
 ### [Open-in-Seanime](https://github.com/bruuhim/Open-in-Seanime)

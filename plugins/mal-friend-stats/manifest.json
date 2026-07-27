@@ -1,0 +1,45 @@
+{
+  "id": "mal-friend-stats",
+  "name": "MAL Friend Stats",
+  "version": "1.0.0",
+  "language": "typescript",
+  "type": "plugin",
+  "description": "Shows which of your MyAnimeList friends are watching or have rated the anime you're viewing",
+  "author": "mal-friend-stats",
+  "icon": "",
+  "website": "",
+  "lang": "multi",
+  "payloadURI": "main.ts",
+  "plugin": {
+    "version": "1",
+    "permissions": {
+      "scopes": ["anilist", "database", "anilist-token", "system", "network"],
+      "allow": {
+        "commandScopes": [
+          {
+            "command": "cmd",
+            "args": [
+              { "value": "/c" },
+              { "value": "start" },
+              { "validator": "^https://myanimelist\\.net/profile/.*$" }
+            ]
+          },
+          {
+            "command": "open",
+            "args": [
+              { "validator": "^https://myanimelist\\.net/profile/.*$" }
+            ]
+          },
+          {
+            "command": "xdg-open",
+            "args": [
+              { "validator": "^https://myanimelist\\.net/profile/.*$" }
+            ]
+          }
+        ],
+        "urls": ["https://api.jikan.moe/v4/*"]
+      }
+    }
+  },
+  "isDevelopment": true
+}
