@@ -9,7 +9,7 @@
   "icon": "",
   "website": "",
   "lang": "multi",
-  "payloadURI": "main.ts",
+  "payloadURI": "https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/plugins/mal-friend-stats/main.ts",
   "plugin": {
     "version": "1",
     "permissions": {
@@ -41,5 +41,5 @@
       }
     }
   },
-  "isDevelopment": true
+  "isDevelopment": false
 }
