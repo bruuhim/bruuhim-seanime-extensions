@@ -59,67 +59,19 @@ function init() {
 
         // ──────────────────────────────── Constants ────────────────────────────────
 
-        const JIKAN_BASE = "https://api.jikan.moe/v4"
-        const JIKAN_DELAY_MS = 400
         const MAX_FRIENDS = 15
         const CACHE_TTL_MS = 10 * 60 * 1000  // 10 min
-        let lastJikanCall = 0
-
-        // ──────────────────────────────── Jikan API ────────────────────────────────
-
-        async function jikanGet<T>(path: string): Promise<T | null> {
-            console.log(`mal-friend-stats: jikanGet called for path: ${path}`)
-            for (let attempt = 0; attempt < 2; attempt++) {
-                const now = Date.now()
-                const elapsed = now - lastJikanCall
-                if (elapsed < JIKAN_DELAY_MS) {
-                    const delay = JIKAN_DELAY_MS - elapsed
-                    console.log(`mal-friend-stats: jikanGet rate-limiting sleep for ${delay}ms`)
-                    await new Promise<void>(resolve => ctx.setTimeout(resolve, delay))
-                }
-                lastJikanCall = Date.now()
-
-                try {
-                    let response: $ui.FetchResponse | undefined
-                    const url = JIKAN_BASE + path
-                    console.log(`mal-friend-stats: fetching Jikan API URL (attempt ${attempt + 1}): ${url}`)
-                    response = await ctx.fetch(url)
-                    if (!response) {
-                        console.error(`mal-friend-stats: jikanGet received undefined response for ${path}`)
-                        return null
-                    }
-                    console.log(`mal-friend-stats: Jikan response status: ${response.status}`)
-                    if (response.status === 429) {
-                        const sleepTime = 1000 * (attempt + 1)
-                        console.warn(`mal-friend-stats: Jikan hit 429 rate limit. Sleeping for ${sleepTime}ms before retry...`)
-                        await new Promise<void>(resolve => ctx.setTimeout(resolve, sleepTime))
-                        continue
-                    }
-                    if (!response.ok) {
-                        console.error(`mal-friend-stats: Jikan response not ok. status: ${response.status}`)
-                        return null
-                    }
-                    const data = response.json<T>()
-                    console.log(`mal-friend-stats: Jikan request successful.`)
-                    return data
-                } catch (err) {
-                    console.error(`mal-friend-stats: Jikan exception on path ${path}:`, err)
-                    if (attempt === 1) return null
-                }
-            }
-            return null
-        }
 
         // ──────────────────────────────── Helpers ────────────────────────────────
 
-        function mapJikanStatus(status: string): string {
-            switch (status) {
-                case "watching":       return "CURRENT"
-                case "completed":      return "COMPLETED"
-                case "on_hold":        return "PAUSED"
-                case "dropped":        return "DROPPED"
-                case "plan_to_watch":  return "PLANNING"
-                default:               return "PLANNING"
+        function mapMALStatus(statusNum: number): string {
+            switch (statusNum) {
+                case 1:  return "CURRENT"
+                case 2:  return "COMPLETED"
+                case 3:  return "PAUSED"
+                case 4:  return "DROPPED"
+                case 6:  return "PLANNING"
+                default: return "PLANNING"
             }
         }
 
@@ -146,8 +98,6 @@ function init() {
             }
         }
 
-        // ───────────────────────────────── Settings ─────────────────────────────────
-
         function getMALUsername(): string | null {
             console.log("mal-friend-stats: getMALUsername checking config...")
             const malUser = "{{malUsername}}"
@@ -161,55 +111,108 @@ function init() {
 
         async function fetchMalFriends(malId: number, malUsername: string): Promise<FriendEntry[]> {
             console.log(`mal-friend-stats: fetchMalFriends starting for MAL ID: ${malId}, user: ${malUsername}`)
-            const friendsResp = await jikanGet<JikanFriendsResponse>(
-                `/users/${encodeURIComponent(malUsername)}/friends`,
-            )
-            if (!friendsResp) {
-                console.warn(`mal-friend-stats: failed to fetch friends list for ${malUsername}`)
+            
+            const friendsUrl = `https://myanimelist.net/profile/${encodeURIComponent(malUsername)}/friends`
+            console.log(`mal-friend-stats: fetching friends list directly from: ${friendsUrl}`)
+            
+            let friendsHtml = ""
+            try {
+                const friendsHtmlResp = await ctx.fetch(friendsUrl)
+                if (!friendsHtmlResp || !friendsHtmlResp.ok) {
+                    console.error(`mal-friend-stats: failed to fetch friends list page for ${malUsername}, status: ${friendsHtmlResp?.status}`)
+                    return []
+                }
+                friendsHtml = friendsHtmlResp.text()
+            } catch (err) {
+                console.error(`mal-friend-stats: error fetching friends list from MAL:`, err)
                 return []
             }
-            if (!friendsResp.data || !friendsResp.data.length) {
-                console.log(`mal-friend-stats: friends list is empty for ${malUsername}`)
-                return []
-            }
-            console.log(`mal-friend-stats: retrieved ${friendsResp.data.length} friends. Processing up to ${MAX_FRIENDS}...`)
 
+            const parts = friendsHtml.split('<div class="boxlist col-3">')
+            const parsedFriends: { username: string, avatar: string }[] = []
+            
+            for (let i = 1; i < parts.length; i++) {
+                const part = parts[i]
+                const userMatch = part.match(/href="https:\/\/myanimelist\.net\/profile\/([^"/?#\s]+)"/)
+                if (userMatch) {
+                    const username = decodeURIComponent(userMatch[1])
+                    let avatar = ""
+                    const dataSrcMatch = part.match(/data-src="([^"]+)"/)
+                    if (dataSrcMatch) {
+                        avatar = dataSrcMatch[1]
+                    } else {
+                        const srcMatch = part.match(/src="([^"]+)"/)
+                        if (srcMatch && !srcMatch[1].endsWith('spacer.gif')) {
+                            avatar = srcMatch[1]
+                        }
+                    }
+                    parsedFriends.push({ username, avatar })
+                }
+            }
+
+            console.log(`mal-friend-stats: parsed ${parsedFriends.length} friends. Checking up to ${MAX_FRIENDS}...`)
+            
             const results: FriendEntry[] = []
-            const limit = Math.min(friendsResp.data.length, MAX_FRIENDS)
+            const limit = Math.min(parsedFriends.length, MAX_FRIENDS)
 
             for (let i = 0; i < limit; i++) {
-                const friend = friendsResp.data[i]
-                const username = friend.user.username
-                console.log(`[${i+1}/${limit}] mal-friend-stats: checking friend: ${username}`)
+                const friend = parsedFriends[i]
+                console.log(`[${i+1}/${limit}] mal-friend-stats: checking friend: ${friend.username}`)
 
-                const listResp = await jikanGet<JikanListResponse>(
-                    `/users/${encodeURIComponent(username)}/animelist`,
-                )
-                if (!listResp) {
-                    console.log(`mal-friend-stats: failed to fetch animelist for friend ${username}`)
+                if (i > 0) {
+                    // Stagger request to be polite to MAL servers
+                    await new Promise<void>(r => ctx.setTimeout(r, 150))
+                }
+
+                let offset = 0
+                let match: any = null
+                
+                try {
+                    while (offset < 900) {
+                        const listUrl = `https://myanimelist.net/animelist/${encodeURIComponent(friend.username)}/load.json?status=7&offset=${offset}`
+                        const listResp = await ctx.fetch(listUrl)
+                        if (!listResp || !listResp.ok) {
+                            console.log(`mal-friend-stats: failed to fetch animelist for ${friend.username} at offset ${offset}, status: ${listResp?.status}`)
+                            break
+                        }
+                        
+                        const pageData = listResp.json<any[]>()
+                        if (!pageData || !pageData.length) {
+                            break
+                        }
+
+                        match = pageData.find(e => e.anime_id === malId)
+                        if (match) {
+                            break
+                        }
+                        
+                        if (pageData.length < 300) {
+                            break
+                        }
+                        
+                        offset += 300
+                        await new Promise<void>(r => ctx.setTimeout(r, 50))
+                    }
+                } catch (err) {
+                    console.error(`mal-friend-stats: error checking animelist for friend ${friend.username}:`, err)
                     continue
                 }
-                if (!listResp.data) {
-                    console.log(`mal-friend-stats: empty/invalid animelist for friend ${username}`)
-                    continue
-                }
-                console.log(`mal-friend-stats: fetched ${listResp.data.length} anime entries for friend ${username}`)
 
-                const match = listResp.data.find(e => e.anime.mal_id === malId)
                 if (!match) {
-                    console.log(`mal-friend-stats: friend ${username} has NOT watched anime MAL ID ${malId}`)
+                    console.log(`mal-friend-stats: friend ${friend.username} has NOT watched anime MAL ID ${malId}`)
                     continue
                 }
 
-                console.log(`mal-friend-stats: MATCH FOUND! friend ${username} status: ${match.status}, score: ${match.score}, progress: ${match.episodes_watched}`)
+                console.log(`mal-friend-stats: MATCH FOUND! friend ${friend.username} status: ${match.status}, score: ${match.score}, progress: ${match.num_watched_episodes}`)
+                
                 results.push({
-                    status: mapJikanStatus(match.status),
+                    status: mapMALStatus(match.status),
                     score: (match.score || 0) * 10,
-                    progress: match.episodes_watched || 0,
-                    totalEpisodes: match.anime.episodes ?? undefined,
+                    progress: match.num_watched_episodes || 0,
+                    totalEpisodes: match.anime_num_episodes ?? undefined,
                     user: {
-                        name: username,
-                        avatar: friend.user.images?.webp?.image_url,
+                        name: friend.username,
+                        avatar: friend.avatar || undefined,
                     },
                 })
             }

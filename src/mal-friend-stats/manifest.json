@@ -1,7 +1,7 @@
 {
   "id": "mal-friend-stats",
   "name": "MAL Friend Stats",
-  "version": "0.0.7",
+  "version": "0.0.8",
   "manifestURI": "https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/src/mal-friend-stats/manifest.json",
   "language": "typescript",
   "type": "plugin",
@@ -38,7 +38,7 @@
             ]
           }
         ],
-        "urls": ["https://api.jikan.moe/v4/*"]
+        "urls": ["https://api.jikan.moe/v4/*", "https://myanimelist.net/*"]
       }
     }
   },
