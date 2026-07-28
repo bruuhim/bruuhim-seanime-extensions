@@ -144,14 +144,7 @@ function init() {
             } catch (e) {
                 console.log("mal-friend-stats: getUserPreference failed or not set:", (e as Error).message)
             }
-            try {
-                const stored = $storage.get("mal-username")
-                console.log(`mal-friend-stats: storage.get('mal-username') returned: "${stored}"`)
-                if (stored) return stored
-            } catch (e) {
-                console.log("mal-friend-stats: storage.get failed:", (e as Error).message)
-            }
-            console.warn("mal-friend-stats: No MAL username found in preferences or storage")
+            console.warn("mal-friend-stats: No MAL username found in preferences")
             return null
         }
 
@@ -297,55 +290,20 @@ function init() {
                 return
             }
 
-            // Check storage cache
-            console.log(`mal-friend-stats: checking cache for mal-friends-${malId}`)
-            try {
-                const cached = $storage.get(`mal-friends-${malId}`)
-                if (cached) {
-                    const { timestamp, entries } = JSON.parse(cached)
-                    const age = Date.now() - timestamp
-                    console.log(`mal-friend-stats: cache age is ${age}ms (TTL: ${CACHE_TTL_MS}ms)`)
-                    if (age < CACHE_TTL_MS) {
-                        console.log(`mal-friend-stats: CACHE HIT. entries count: ${entries ? entries.length : 0}`)
-                        friends.set(entries)
-                        loading.set(false)
-                        if (entries.length > 0) {
-                            console.log("mal-friend-stats: Cache has entries, showing panel.")
-                            panel.show()
-                        } else {
-                            console.log("mal-friend-stats: Cache has 0 entries, hiding panel.")
-                            panel.hide()
-                        }
-                        return
-                    }
-                    console.log("mal-friend-stats: Cache expired.")
-                } else {
-                    console.log("mal-friend-stats: Cache miss (no cache entry).")
-                }
-            } catch (err) {
-                console.error("mal-friend-stats: cache retrieval error:", (err as Error).message)
-            }
-
-            console.log("mal-friend-stats: Setting loading state to true and fetching from Jikan...")
+            console.log("mal-friend-stats: Setting loading state to true and retrieving from cache or Jikan...")
             loading.set(true)
-            const entries = fetchMalFriends(malId, malUser)
 
-            console.log(`mal-friend-stats: Fetch complete. Saving ${entries.length} entries to cache.`)
-            try {
-                $storage.set(`mal-friends-${malId}`, JSON.stringify({
-                    timestamp: Date.now(),
-                    entries,
-                }))
-                console.log("mal-friend-stats: Cached successfully.")
-            } catch (err) {
-                console.error("mal-friend-stats: failed to write cache:", (err as Error).message)
-            }
+            const entries = ctx.cache.getOrSet(`mal-friends-${malUser}-${malId}`, () => {
+                console.log(`mal-friend-stats: cache miss or expired for mal-friends-${malUser}-${malId}. Fetching from Jikan...`)
+                return fetchMalFriends(malId, malUser)
+            }, CACHE_TTL_MS) as FriendEntry[]
 
+            console.log(`mal-friend-stats: retrieved ${entries.length} entries.`)
             friends.set(entries)
             loading.set(false)
 
             if (entries.length > 0) {
-                console.log("mal-friend-stats: Showing panel with new entries.")
+                console.log("mal-friend-stats: Showing panel with entries.")
                 panel.show()
             } else {
                 console.log("mal-friend-stats: Hiding panel (no entries).")
@@ -455,7 +413,7 @@ function init() {
         if (!configured) {
             var note = document.createElement("div")
             note.className = "note"
-            note.textContent = "Set your MAL username in settings or $storage('mal-username')"
+            note.textContent = "Set your MAL username in settings"
             app.appendChild(note)
             return
         }
