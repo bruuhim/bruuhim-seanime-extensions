@@ -1,4 +1,4 @@
-/// <reference path="../typing/manga-provider.d.ts" />
+/// <reference path="../../typing/manga-provider.d.ts" />
 
 class Provider {
     private api: string = "https://3asq.org"

@@ -27,9 +27,9 @@ These providers are optimized for stability, featuring AJAX fallbacks and Cloudf
 
 | Provider                  | Description                            | Installation Manifest (URL)                                                                                              |
 | :------------------------ | :------------------------------------- | :----------------------------------------------------------------------------------------------------------------------- |
-| **3asq (Arabic)**         | Premium Arabic manga from 3asq.org     | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/manga-providers/3asq/3asq.json`               |
-| **AzoraMoon (Arabic)**    | Fast Arabic manga from azoramoon.com   | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/manga-providers/azoramoon/azoramoon.json`     |
-| **OlympusStaff (Arabic)** | Extensive library from olympustaff.com | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/manga-providers/olympustaff/olympustaff.json` |
+| **3asq (Arabic)**         | Premium Arabic manga from 3asq.org     | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/src/3asq/3asq.json`               |
+| **AzoraMoon (Arabic)**    | Fast Arabic manga from azoramoon.com   | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/src/azoramoon/azoramoon.json`     |
+| **OlympusStaff (Arabic)** | Extensive library from olympustaff.com | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/src/olympustaff/olympustaff.json` |
 
 <br />
 
@@ -39,7 +39,7 @@ Seanime plugin extensions that enhance your anime browsing experience directly w
 
 | Plugin | Description | Installation Manifest (URL) |
 | :----- | :---------- | :-------------------------- |
-| **MAL Friend Stats** | Shows which of your MyAnimeList friends are watching or have rated the anime you're viewing | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/plugins/mal-friend-stats/manifest.json` |
+| **MAL Friend Stats** | Shows which of your MyAnimeList friends are watching or have rated the anime you're viewing | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/src/mal-friend-stats/manifest.json` |
 
 <br />
 
