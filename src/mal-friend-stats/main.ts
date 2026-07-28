@@ -55,6 +55,8 @@ function init() {
             data: JikanAnimeEntry[]
         }
 
+        const friendsCache = new Map<string, { value: FriendEntry[], expiresAt: number }>()
+
         // ──────────────────────────────── Constants ────────────────────────────────
 
         const JIKAN_BASE = "https://api.jikan.moe/v4"
@@ -65,7 +67,7 @@ function init() {
 
         // ──────────────────────────────── Jikan API ────────────────────────────────
 
-        function jikanGet<T>(path: string): T | null {
+        async function jikanGet<T>(path: string): Promise<T | null> {
             console.log(`mal-friend-stats: jikanGet called for path: ${path}`)
             for (let attempt = 0; attempt < 2; attempt++) {
                 const now = Date.now()
@@ -73,15 +75,15 @@ function init() {
                 if (elapsed < JIKAN_DELAY_MS) {
                     const delay = JIKAN_DELAY_MS - elapsed
                     console.log(`mal-friend-stats: jikanGet rate-limiting sleep for ${delay}ms`)
-                    $sleep(delay)
+                    await new Promise<void>(resolve => ctx.setTimeout(resolve, delay))
                 }
                 lastJikanCall = Date.now()
 
                 try {
-                    let response: FetchResponse | undefined
+                    let response: $ui.FetchResponse | undefined
                     const url = JIKAN_BASE + path
                     console.log(`mal-friend-stats: fetching Jikan API URL (attempt ${attempt + 1}): ${url}`)
-                    $await(fetch(url).then(r => { response = r }))
+                    response = await ctx.fetch(url)
                     if (!response) {
                         console.error(`mal-friend-stats: jikanGet received undefined response for ${path}`)
                         return null
@@ -90,7 +92,7 @@ function init() {
                     if (response.status === 429) {
                         const sleepTime = 1000 * (attempt + 1)
                         console.warn(`mal-friend-stats: Jikan hit 429 rate limit. Sleeping for ${sleepTime}ms before retry...`)
-                        $sleep(sleepTime)
+                        await new Promise<void>(resolve => ctx.setTimeout(resolve, sleepTime))
                         continue
                     }
                     if (!response.ok) {
@@ -144,6 +146,8 @@ function init() {
             }
         }
 
+        // ───────────────────────────────── Settings ─────────────────────────────────
+
         function getMALUsername(): string | null {
             console.log("mal-friend-stats: getMALUsername checking config...")
             const malUser = "{{malUsername}}"
@@ -155,9 +159,9 @@ function init() {
             return malUser
         }
 
-        function fetchMalFriends(malId: number, malUsername: string): FriendEntry[] {
+        async function fetchMalFriends(malId: number, malUsername: string): Promise<FriendEntry[]> {
             console.log(`mal-friend-stats: fetchMalFriends starting for MAL ID: ${malId}, user: ${malUsername}`)
-            const friendsResp = jikanGet<JikanFriendsResponse>(
+            const friendsResp = await jikanGet<JikanFriendsResponse>(
                 `/users/${encodeURIComponent(malUsername)}/friends`,
             )
             if (!friendsResp) {
@@ -178,7 +182,7 @@ function init() {
                 const username = friend.user.username
                 console.log(`[${i+1}/${limit}] mal-friend-stats: checking friend: ${username}`)
 
-                const listResp = jikanGet<JikanListResponse>(
+                const listResp = await jikanGet<JikanListResponse>(
                     `/users/${encodeURIComponent(username)}/animelist`,
                 )
                 if (!listResp) {
@@ -311,22 +315,42 @@ function init() {
             console.log("mal-friend-stats: Setting loading state to true and retrieving from cache or Jikan...")
             loading.set(true)
 
-            const entries = ctx.cache.getOrSet(`mal-friends-${malUser}-${malId}`, () => {
-                console.log(`mal-friend-stats: cache miss or expired for mal-friends-${malUser}-${malId}. Fetching from Jikan...`)
-                return fetchMalFriends(malId, malUser)
-            }, CACHE_TTL_MS) as FriendEntry[]
+            ;(async () => {
+                try {
+                    const cacheKey = `mal-friends-${malUser}-${malId}`
+                    const cached = friendsCache.get(cacheKey)
+                    const now = Date.now()
 
-            console.log(`mal-friend-stats: retrieved ${entries.length} entries.`)
-            friends.set(entries)
-            loading.set(false)
+                    let entries: FriendEntry[] = []
+                    if (cached && cached.expiresAt > now) {
+                        entries = cached.value
+                    } else {
+                        console.log(`mal-friend-stats: cache miss or expired for ${cacheKey}. Fetching from Jikan...`)
+                        entries = await fetchMalFriends(malId, malUser)
+                        friendsCache.set(cacheKey, {
+                            value: entries,
+                            expiresAt: now + CACHE_TTL_MS
+                        })
+                    }
 
-            if (entries.length > 0) {
-                console.log("mal-friend-stats: Showing panel with entries.")
-                panel.show()
-            } else {
-                console.log("mal-friend-stats: Hiding panel (no entries).")
-                panel.hide()
-            }
+                    console.log(`mal-friend-stats: retrieved ${entries.length} entries.`)
+                    friends.set(entries)
+
+                    if (entries.length > 0) {
+                        console.log("mal-friend-stats: Showing panel with entries.")
+                        panel.show()
+                    } else {
+                        console.log("mal-friend-stats: Hiding panel (no entries).")
+                        panel.hide()
+                    }
+                } catch (err) {
+                    console.error("mal-friend-stats: error fetching friends list:", err)
+                    friends.set([])
+                    panel.hide()
+                } finally {
+                    loading.set(false)
+                }
+            })()
         }, [mediaId])
 
         // ── UI ──
