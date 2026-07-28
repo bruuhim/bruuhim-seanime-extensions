@@ -1,8 +1,7 @@
 {
   "id": "mal-friend-stats",
   "name": "MAL Friend Stats",
-  "version": "0.0.1",
-  "manifestURI": "https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/plugins/mal-friend-stats/manifest.json",
+  "version": "0.0.2",
   "language": "typescript",
   "type": "plugin",
   "description": "Shows which of your MyAnimeList friends are watching or have rated the anime you're viewing",
@@ -10,7 +9,7 @@
   "icon": "",
   "website": "",
   "lang": "multi",
-  "payloadURI": "https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/plugins/mal-friend-stats/main.ts",
+  "payloadURI": "main.ts",
   "plugin": {
     "version": "1",
     "permissions": {
@@ -42,5 +41,5 @@
       }
     }
   },
-  "isDevelopment": false
+  "isDevelopment": true
 }

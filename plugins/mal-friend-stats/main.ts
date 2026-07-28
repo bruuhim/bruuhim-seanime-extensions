@@ -3,157 +3,165 @@
 /// <reference path="./app.d.ts" />
 /// <reference path="./core.d.ts" />
 
-interface FriendEntry {
-    status: string
-    score: number
-    progress: number
-    totalEpisodes?: number
-    user: {
-        name: string
-        avatar?: string
-    }
-}
-
-interface JikanUser {
-    username: string
-    images?: { webp?: { image_url?: string } }
-}
-
-interface JikanFriendEntry {
-    user: JikanUser
-}
-
-interface JikanFriendsResponse {
-    data: JikanFriendEntry[]
-}
-
-interface JikanAnimeEntry {
-    anime: {
-        mal_id: number
-        episodes?: number
-    }
-    status: string
-    score: number
-    episodes_watched: number
-}
-
-interface JikanListResponse {
-    data: JikanAnimeEntry[]
-}
-
 function init() {
-    // ── Constants ──
-    const JIKAN_BASE = "https://api.jikan.moe/v4"
-    const JIKAN_DELAY_MS = 400
-    const MAX_FRIENDS = 15
-    const CACHE_TTL_MS = 10 * 60 * 1000
-    let lastJikanCall = 0
+    $ui.register((ctx) => {
 
-    // ── Jikan API ──
-    function jikanGet<T>(path: string): T | null {
-        for (let attempt = 0; attempt < 2; attempt++) {
-            const now = Date.now()
-            const elapsed = now - lastJikanCall
-            if (elapsed < JIKAN_DELAY_MS) {
-                $sleep(JIKAN_DELAY_MS - elapsed)
+        // ──────────────────────────────── Types ────────────────────────────────
+
+        interface FriendEntry {
+            status: string
+            score: number
+            progress: number
+            totalEpisodes?: number
+            user: {
+                name: string
+                avatar?: string
             }
-            lastJikanCall = Date.now()
+        }
 
-            try {
-                let response: FetchResponse | undefined
-                $await(fetch(JIKAN_BASE + path).then(r => { response = r }))
-                if (!response) return null
-                if (response.status === 429) {
-                    $sleep(1000 * (attempt + 1))
-                    continue
+        interface JikanUser {
+            username: string
+            images?: { webp?: { image_url?: string } }
+        }
+
+        interface JikanFriendEntry {
+            user: JikanUser
+        }
+
+        interface JikanFriendsResponse {
+            data: JikanFriendEntry[]
+        }
+
+        interface JikanAnimeEntry {
+            anime: {
+                mal_id: number
+                episodes?: number
+            }
+            status: string
+            score: number
+            episodes_watched: number
+        }
+
+        interface JikanListResponse {
+            data: JikanAnimeEntry[]
+        }
+
+        // ──────────────────────────────── Constants ────────────────────────────────
+
+        const JIKAN_BASE = "https://api.jikan.moe/v4"
+        const JIKAN_DELAY_MS = 400
+        const MAX_FRIENDS = 15
+        const CACHE_TTL_MS = 10 * 60 * 1000  // 10 min
+        let lastJikanCall = 0
+
+        // ──────────────────────────────── Jikan API ────────────────────────────────
+
+        function jikanGet<T>(path: string): T | null {
+            for (let attempt = 0; attempt < 2; attempt++) {
+                const now = Date.now()
+                const elapsed = now - lastJikanCall
+                if (elapsed < JIKAN_DELAY_MS) {
+                    $sleep(JIKAN_DELAY_MS - elapsed)
                 }
-                if (!response.ok) return null
-                return response.json<T>()
-            } catch (err) {
-                console.error("mal-friend-stats: Jikan error", err)
-                if (attempt === 1) return null
+                lastJikanCall = Date.now()
+
+                try {
+                    let response: FetchResponse | undefined
+                    $await(fetch(JIKAN_BASE + path).then(r => { response = r }))
+                    if (!response) return null
+                    if (response.status === 429) {
+                        $sleep(1000 * (attempt + 1))
+                        continue
+                    }
+                    if (!response.ok) return null
+                    return response.json<T>()
+                } catch (err) {
+                    console.error("mal-friend-stats: Jikan error", err)
+                    if (attempt === 1) return null
+                }
             }
-        }
-        return null
-    }
-
-    // ── Helpers ──
-    function mapJikanStatus(status: string): string {
-        switch (status) {
-            case "watching":       return "CURRENT"
-            case "completed":      return "COMPLETED"
-            case "on_hold":        return "PAUSED"
-            case "dropped":        return "DROPPED"
-            case "plan_to_watch":  return "PLANNING"
-            default:               return "PLANNING"
-        }
-    }
-
-    function getMalMediaId(anilistId: number): number | null {
-        const token = $database.anilist.getToken()
-        if (!token) return null
-        try {
-            const query = `query ($id: Int) { Media(id: $id) { idMal } }`
-            const res = $anilist.customQuery<{ Media: { idMal: number | null } }>(
-                { query, variables: { id: anilistId } },
-                token,
-            )
-            return res?.Media?.idMal ?? null
-        } catch (err) {
-            console.error("mal-friend-stats: failed to get MAL id", err)
             return null
         }
-    }
 
-    function getMALUsername(): string | null {
-        try {
-            const pref = $getUserPreference("MALUsername")
-            if (pref) return pref
-        } catch {}
-        try {
-            const stored = $storage.get("mal-username")
-            if (stored) return stored
-        } catch {}
-        return null
-    }
+        // ──────────────────────────────── Helpers ────────────────────────────────
 
-    function fetchMalFriends(malId: number, malUsername: string): FriendEntry[] {
-        const friendsResp = jikanGet<JikanFriendsResponse>(
-            `/users/${encodeURIComponent(malUsername)}/friends`,
-        )
-        if (!friendsResp?.data?.length) return []
-
-        const results: FriendEntry[] = []
-        const limit = Math.min(friendsResp.data.length, MAX_FRIENDS)
-
-        for (let i = 0; i < limit; i++) {
-            const friend = friendsResp.data[i]
-            const username = friend.user.username
-
-            const listResp = jikanGet<JikanListResponse>(
-                `/users/${encodeURIComponent(username)}/animelist`,
-            )
-            if (!listResp?.data) continue
-
-            const match = listResp.data.find(e => e.anime.mal_id === malId)
-            if (!match) continue
-
-            results.push({
-                status: mapJikanStatus(match.status),
-                score: (match.score || 0) * 10,
-                progress: match.episodes_watched || 0,
-                totalEpisodes: match.anime.episodes ?? undefined,
-                user: {
-                    name: username,
-                    avatar: friend.user.images?.webp?.image_url,
-                },
-            })
+        function mapJikanStatus(status: string): string {
+            switch (status) {
+                case "watching":       return "CURRENT"
+                case "completed":      return "COMPLETED"
+                case "on_hold":        return "PAUSED"
+                case "dropped":        return "DROPPED"
+                case "plan_to_watch":  return "PLANNING"
+                default:               return "PLANNING"
+            }
         }
-        return results
-    }
 
-    // ── Plugin UI ──
-    $ui.register((ctx) => {
+        function getMalMediaId(anilistId: number): number | null {
+            const token = $database.anilist.getToken()
+            if (!token) return null
+            try {
+                const query = `query ($id: Int) { Media(id: $id) { idMal } }`
+                const res = $anilist.customQuery<{ Media: { idMal: number | null } }>(
+                    { query, variables: { id: anilistId } },
+                    token,
+                )
+                return res?.Media?.idMal ?? null
+            } catch (err) {
+                console.error("mal-friend-stats: failed to get MAL id", err)
+                return null
+            }
+        }
+
+        function getMALUsername(): string | null {
+            try {
+                const pref = $getUserPreference("MALUsername")
+                if (pref) return pref
+            } catch {}
+            try {
+                const stored = $storage.get("mal-username")
+                if (stored) return stored
+            } catch {}
+            return null
+        }
+
+        function fetchMalFriends(malId: number, malUsername: string): FriendEntry[] {
+            const friendsResp = jikanGet<JikanFriendsResponse>(
+                `/users/${encodeURIComponent(malUsername)}/friends`,
+            )
+            if (!friendsResp?.data?.length) return []
+
+            const results: FriendEntry[] = []
+            const limit = Math.min(friendsResp.data.length, MAX_FRIENDS)
+
+            for (let i = 0; i < limit; i++) {
+                const friend = friendsResp.data[i]
+                const username = friend.user.username
+
+                const listResp = jikanGet<JikanListResponse>(
+                    `/users/${encodeURIComponent(username)}/animelist`,
+                )
+                if (!listResp?.data) continue
+
+                const match = listResp.data.find(e => e.anime.mal_id === malId)
+                if (!match) continue
+
+                results.push({
+                    status: mapJikanStatus(match.status),
+                    score: (match.score || 0) * 10,
+                    progress: match.episodes_watched || 0,
+                    totalEpisodes: match.anime.episodes ?? undefined,
+                    user: {
+                        name: username,
+                        avatar: friend.user.images?.webp?.image_url,
+                    },
+                })
+            }
+
+            return results
+        }
+
+        // ──────────────────────────────── Plugin Entry ────────────────────────────────
+
         const mediaId = ctx.state(0)
         const friends = ctx.state<FriendEntry[]>([])
         const loading = ctx.state(false)
@@ -169,6 +177,7 @@ function init() {
         panel.channel.sync("loading", loading)
         panel.channel.sync("configured", configured)
 
+        // ── Open profile links ──
         const openUrl = ctx.state("")
         panel.channel.on("open-profile", (url: string) => {
             openUrl.set(url)
@@ -191,6 +200,7 @@ function init() {
             openUrl.set("")
         }, [openUrl])
 
+        // ── Track navigation ──
         ctx.screen.onNavigate((e) => {
             const id = e.pathname === "/entry" && !!e.searchParams.id
                 ? parseInt(e.searchParams.id)
@@ -199,6 +209,7 @@ function init() {
         })
         ctx.screen.loadCurrent()
 
+        // ── Main effect ──
         ctx.effect(() => {
             const id = mediaId.get()
             if (!id) {
@@ -258,6 +269,7 @@ function init() {
             else panel.hide()
         }, [mediaId])
 
+        // ── UI ──
         panel.setContent(() => `
 <!DOCTYPE html>
 <html lang="en">
@@ -266,19 +278,26 @@ function init() {
 <style>
     html { color-scheme: dark; overflow: hidden; }
     body { background: transparent; color: #e2e8f0; font-family: -apple-system, system-ui, sans-serif; margin: 0; padding: 0; }
+
     .heading { font-size: 1.3rem; font-weight: 600; margin: 0 0 12px; display: flex; align-items: center; gap: 8px; }
-    .heading .badge { font-size: 0.7rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: #2e51a2; color: #fff; }
+    .heading .icon-svg { flex-shrink: 0; }
+    .heading .badge { font-size: 0.7rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: #2e51a2; color: #fff; margin-left: 4px; }
+
     .list { display: flex; flex-wrap: wrap; gap: 9px; }
+
     .row { display: flex; align-items: center; gap: 12px; padding: 9px 15px; background: rgba(255,255,255,0.04); border-radius: 12px; text-decoration: none; color: inherit; cursor: pointer; }
     .row:hover { background: rgba(255,255,255,0.08); }
+
     .avatar { width: 42px; height: 42px; border-radius: 50%; object-fit: cover; flex-shrink: 0; background: rgba(255,255,255,0.08); }
     .name { font-size: 1.3rem; max-width: 270px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .episode { font-size: 1.2rem; opacity: 0.8; }
     .score { font-size: 1.2rem; font-weight: 600; }
     .status { font-size: 1.1rem; font-weight: 600; padding: 3px 12px; border-radius: 999px; color: #10161f; }
+
     .loading { display: flex; align-items: center; gap: 10px; padding: 12px 15px; color: #8892a4; font-size: 1.2rem; }
     .spinner { width: 18px; height: 18px; border: 2px solid rgba(255,255,255,0.12); border-top-color: #8892a4; border-radius: 50%; animation: spin 0.8s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
+
     .empty { color: #8892a4; padding: 12px 15px; font-size: 1.2rem; }
     .note { color: #5a6476; padding: 12px 15px; font-size: 1.1rem; }
 </style>
@@ -376,9 +395,11 @@ function init() {
             return
         }
 
+        // Heading with MAL icon
         var heading = document.createElement("div")
         heading.className = "heading"
-        heading.textContent = "MAL Friends"
+        heading.innerHTML = '<svg class="icon-svg" width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="10" fill="#2e51a2"/><circle cx="8.5" cy="9.5" r="1.5" fill="white"/><circle cx="15.5" cy="9.5" r="1.5" fill="white"/><path d="M7 14.5c1.5 2.5 4.5 2.5 6 0" stroke="white" stroke-width="2" stroke-linecap="round" fill="none"/></svg>'
+        heading.appendChild(document.createTextNode("MAL Friends"))
         var badge = document.createElement("span")
         badge.className = "badge"
         badge.textContent = "MAL"
