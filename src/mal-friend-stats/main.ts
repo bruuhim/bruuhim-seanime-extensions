@@ -288,9 +288,20 @@ function init() {
             }
             configured.set(true)
 
-            const malId = getMalMediaId(id)
+            let malId: number | null = null
+            try {
+                malId = ctx.cache.getOrSet(`mal-id-${id}`, () => {
+                    const resolved = getMalMediaId(id)
+                    if (!resolved) {
+                        throw new Error("MAL ID mapping returned null")
+                    }
+                    return resolved
+                }, 24 * 60 * 60 * 1000) as number
+            } catch (err) {
+                console.warn(`mal-friend-stats: could not resolve MAL ID for AniList ID: ${id}:`, (err as Error).message)
+            }
+
             if (!malId) {
-                console.warn(`mal-friend-stats: could not resolve MAL ID for AniList ID: ${id}`)
                 friends.set([])
                 loading.set(false)
                 panel.show()
