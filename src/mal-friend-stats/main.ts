@@ -57,26 +57,42 @@ function init() {
         // ──────────────────────────────── Jikan API ────────────────────────────────
 
         function jikanGet<T>(path: string): T | null {
+            console.log(`mal-friend-stats: jikanGet called for path: ${path}`)
             for (let attempt = 0; attempt < 2; attempt++) {
                 const now = Date.now()
                 const elapsed = now - lastJikanCall
                 if (elapsed < JIKAN_DELAY_MS) {
-                    $sleep(JIKAN_DELAY_MS - elapsed)
+                    const delay = JIKAN_DELAY_MS - elapsed
+                    console.log(`mal-friend-stats: jikanGet rate-limiting sleep for ${delay}ms`)
+                    $sleep(delay)
                 }
                 lastJikanCall = Date.now()
 
                 try {
                     let response: FetchResponse | undefined
-                    $await(fetch(JIKAN_BASE + path).then(r => { response = r }))
-                    if (!response) return null
+                    const url = JIKAN_BASE + path
+                    console.log(`mal-friend-stats: fetching Jikan API URL (attempt ${attempt + 1}): ${url}`)
+                    $await(fetch(url).then(r => { response = r }))
+                    if (!response) {
+                        console.error(`mal-friend-stats: jikanGet received undefined response for ${path}`)
+                        return null
+                    }
+                    console.log(`mal-friend-stats: Jikan response status: ${response.status}`)
                     if (response.status === 429) {
-                        $sleep(1000 * (attempt + 1))
+                        const sleepTime = 1000 * (attempt + 1)
+                        console.warn(`mal-friend-stats: Jikan hit 429 rate limit. Sleeping for ${sleepTime}ms before retry...`)
+                        $sleep(sleepTime)
                         continue
                     }
-                    if (!response.ok) return null
-                    return response.json<T>()
+                    if (!response.ok) {
+                        console.error(`mal-friend-stats: Jikan response not ok. status: ${response.status}`)
+                        return null
+                    }
+                    const data = response.json<T>()
+                    console.log(`mal-friend-stats: Jikan request successful.`)
+                    return data
                 } catch (err) {
-                    console.error("mal-friend-stats: Jikan error", err)
+                    console.error(`mal-friend-stats: Jikan exception on path ${path}:`, err)
                     if (attempt === 1) return null
                 }
             }
@@ -97,38 +113,62 @@ function init() {
         }
 
         function getMalMediaId(anilistId: number): number | null {
+            console.log(`mal-friend-stats: getMalMediaId called for AniList ID: ${anilistId}`)
             const token = $database.anilist.getToken()
-            if (!token) return null
+            if (!token) {
+                console.warn("mal-friend-stats: AniList token is missing or not configured")
+                return null
+            }
             try {
                 const query = `query ($id: Int) { Media(id: $id) { idMal } }`
+                console.log("mal-friend-stats: sending custom GraphQL query for idMal mapping...")
                 const res = $anilist.customQuery<{ Media: { idMal: number | null } }>(
                     { query, variables: { id: anilistId } },
                     token,
                 )
-                return res?.Media?.idMal ?? null
+                const malId = res?.Media?.idMal ?? null
+                console.log(`mal-friend-stats: GraphQL mapped AniList ID ${anilistId} -> MAL ID ${malId}`)
+                return malId
             } catch (err) {
-                console.error("mal-friend-stats: failed to get MAL id", err)
+                console.error("mal-friend-stats: failed to get MAL id:", err)
                 return null
             }
         }
 
         function getMALUsername(): string | null {
+            console.log("mal-friend-stats: getMALUsername checking sources...")
             try {
                 const pref = $getUserPreference("MALUsername")
+                console.log(`mal-friend-stats: getUserPreference('MALUsername') returned: "${pref}"`)
                 if (pref) return pref
-            } catch {}
+            } catch (e) {
+                console.log("mal-friend-stats: getUserPreference failed or not set:", (e as Error).message)
+            }
             try {
                 const stored = $storage.get("mal-username")
+                console.log(`mal-friend-stats: storage.get('mal-username') returned: "${stored}"`)
                 if (stored) return stored
-            } catch {}
+            } catch (e) {
+                console.log("mal-friend-stats: storage.get failed:", (e as Error).message)
+            }
+            console.warn("mal-friend-stats: No MAL username found in preferences or storage")
             return null
         }
 
         function fetchMalFriends(malId: number, malUsername: string): FriendEntry[] {
+            console.log(`mal-friend-stats: fetchMalFriends starting for MAL ID: ${malId}, user: ${malUsername}`)
             const friendsResp = jikanGet<JikanFriendsResponse>(
                 `/users/${encodeURIComponent(malUsername)}/friends`,
             )
-            if (!friendsResp?.data?.length) return []
+            if (!friendsResp) {
+                console.warn(`mal-friend-stats: failed to fetch friends list for ${malUsername}`)
+                return []
+            }
+            if (!friendsResp.data || !friendsResp.data.length) {
+                console.log(`mal-friend-stats: friends list is empty for ${malUsername}`)
+                return []
+            }
+            console.log(`mal-friend-stats: retrieved ${friendsResp.data.length} friends. Processing up to ${MAX_FRIENDS}...`)
 
             const results: FriendEntry[] = []
             const limit = Math.min(friendsResp.data.length, MAX_FRIENDS)
@@ -136,15 +176,28 @@ function init() {
             for (let i = 0; i < limit; i++) {
                 const friend = friendsResp.data[i]
                 const username = friend.user.username
+                console.log(`[${i+1}/${limit}] mal-friend-stats: checking friend: ${username}`)
 
                 const listResp = jikanGet<JikanListResponse>(
                     `/users/${encodeURIComponent(username)}/animelist`,
                 )
-                if (!listResp?.data) continue
+                if (!listResp) {
+                    console.log(`mal-friend-stats: failed to fetch animelist for friend ${username}`)
+                    continue
+                }
+                if (!listResp.data) {
+                    console.log(`mal-friend-stats: empty/invalid animelist for friend ${username}`)
+                    continue
+                }
+                console.log(`mal-friend-stats: fetched ${listResp.data.length} anime entries for friend ${username}`)
 
                 const match = listResp.data.find(e => e.anime.mal_id === malId)
-                if (!match) continue
+                if (!match) {
+                    console.log(`mal-friend-stats: friend ${username} has NOT watched anime MAL ID ${malId}`)
+                    continue
+                }
 
+                console.log(`mal-friend-stats: MATCH FOUND! friend ${username} status: ${match.status}, score: ${match.score}, progress: ${match.episodes_watched}`)
                 results.push({
                     status: mapJikanStatus(match.status),
                     score: (match.score || 0) * 10,
@@ -157,6 +210,7 @@ function init() {
                 })
             }
 
+            console.log(`mal-friend-stats: finished fetching. Found ${results.length} matching friends who watched MAL ID ${malId}`)
             return results
         }
 
@@ -202,9 +256,11 @@ function init() {
 
         // ── Track navigation ──
         ctx.screen.onNavigate((e) => {
+            console.log("mal-friend-stats: onNavigate triggered:", e.pathname, JSON.stringify(e.searchParams))
             const id = e.pathname === "/entry" && !!e.searchParams.id
                 ? parseInt(e.searchParams.id)
                 : 0
+            console.log(`mal-friend-stats: resolved mediaId from navigation: ${id}`)
             mediaId.set(id)
         })
         ctx.screen.loadCurrent()
@@ -212,7 +268,9 @@ function init() {
         // ── Main effect ──
         ctx.effect(() => {
             const id = mediaId.get()
+            console.log(`mal-friend-stats: Main effect triggered. mediaId = ${id}`)
             if (!id) {
+                console.log("mal-friend-stats: No mediaId, cleaning up and hiding panel.")
                 friends.set([])
                 loading.set(false)
                 panel.hide()
@@ -221,6 +279,7 @@ function init() {
 
             const malUser = getMALUsername()
             if (!malUser) {
+                console.warn("mal-friend-stats: MAL username not set, hiding panel.")
                 friends.set([])
                 configured.set(false)
                 loading.set(false)
@@ -231,6 +290,7 @@ function init() {
 
             const malId = getMalMediaId(id)
             if (!malId) {
+                console.warn(`mal-friend-stats: could not resolve MAL ID for AniList ID: ${id}`)
                 friends.set([])
                 loading.set(false)
                 panel.show()
@@ -238,35 +298,59 @@ function init() {
             }
 
             // Check storage cache
+            console.log(`mal-friend-stats: checking cache for mal-friends-${malId}`)
             try {
                 const cached = $storage.get(`mal-friends-${malId}`)
                 if (cached) {
                     const { timestamp, entries } = JSON.parse(cached)
-                    if (Date.now() - timestamp < CACHE_TTL_MS) {
+                    const age = Date.now() - timestamp
+                    console.log(`mal-friend-stats: cache age is ${age}ms (TTL: ${CACHE_TTL_MS}ms)`)
+                    if (age < CACHE_TTL_MS) {
+                        console.log(`mal-friend-stats: CACHE HIT. entries count: ${entries ? entries.length : 0}`)
                         friends.set(entries)
                         loading.set(false)
-                        if (entries.length > 0) panel.show()
-                        else panel.hide()
+                        if (entries.length > 0) {
+                            console.log("mal-friend-stats: Cache has entries, showing panel.")
+                            panel.show()
+                        } else {
+                            console.log("mal-friend-stats: Cache has 0 entries, hiding panel.")
+                            panel.hide()
+                        }
                         return
                     }
+                    console.log("mal-friend-stats: Cache expired.")
+                } else {
+                    console.log("mal-friend-stats: Cache miss (no cache entry).")
                 }
-            } catch {}
+            } catch (err) {
+                console.error("mal-friend-stats: cache retrieval error:", (err as Error).message)
+            }
 
+            console.log("mal-friend-stats: Setting loading state to true and fetching from Jikan...")
             loading.set(true)
             const entries = fetchMalFriends(malId, malUser)
 
+            console.log(`mal-friend-stats: Fetch complete. Saving ${entries.length} entries to cache.`)
             try {
                 $storage.set(`mal-friends-${malId}`, JSON.stringify({
                     timestamp: Date.now(),
                     entries,
                 }))
-            } catch {}
+                console.log("mal-friend-stats: Cached successfully.")
+            } catch (err) {
+                console.error("mal-friend-stats: failed to write cache:", (err as Error).message)
+            }
 
             friends.set(entries)
             loading.set(false)
 
-            if (entries.length > 0) panel.show()
-            else panel.hide()
+            if (entries.length > 0) {
+                console.log("mal-friend-stats: Showing panel with new entries.")
+                panel.show()
+            } else {
+                console.log("mal-friend-stats: Hiding panel (no entries).")
+                panel.hide()
+            }
         }, [mediaId])
 
         // ── UI ──
