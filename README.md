@@ -15,6 +15,8 @@
 ## 📖 Table of Contents
 
 - [Manga Providers](#-manga-providers)
+- [Torrent Search Providers](#-torrent-search-providers)
+- [Seanime Plugins](#-seanime-plugins)
 - [Featured Extensions](#-featured-extensions)
 - [Installation Guide](#-installation-guide)
 - [Technical Details](#-technical-details)
@@ -29,7 +31,18 @@ These providers are optimized for stability, featuring AJAX fallbacks and Cloudf
 | :------------------------ | :------------------------------------- | :----------------------------------------------------------------------------------------------------------------------- |
 | **3asq (Arabic)**         | Premium Arabic manga from 3asq.org     | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/src/3asq/3asq.json`               |
 | **AzoraMoon (Arabic)**    | Fast Arabic manga from azoramoon.com   | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/src/azoramoon/azoramoon.json`     |
+| **MangaTuk (Arabic)**     | Arabic manga from mangatuk.com         | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/src/mangatuk/mangatuk.json`       |
 | **OlympusStaff (Arabic)** | Extensive library from olympustaff.com | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/src/olympustaff/olympustaff.json` |
+
+<br />
+
+## 🌀 Torrent Search Providers
+
+Seanime anime torrent providers to get access to extra torrent indexers.
+
+| Provider | Description | Installation Manifest (URL) |
+| :--- | :--- | :--- |
+| <img src="assets/nekobt.png" width="24" height="24" /> **nekoBT** | nekoBT torrent search provider using quality-aware sort-by-best scoring | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/src/nekobt/nekobt.json` |
 
 <br />
 
@@ -38,8 +51,8 @@ These providers are optimized for stability, featuring AJAX fallbacks and Cloudf
 Seanime plugin extensions that enhance your anime browsing experience directly within the Seanime app.
 
 | Plugin | Description | Installation Manifest (URL) |
-| :----- | :---------- | :-------------------------- |
-| **MAL Friend Stats** | Shows which of your MyAnimeList friends are watching or have rated the anime you're viewing | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/src/mal-friend-stats/manifest.json` |
+| :--- | :--- | :--- |
+| <img src="assets/mal-friend-stats.png" width="24" height="24" /> **MAL Friend Stats** | Shows which of your MyAnimeList friends are watching or have rated the anime you're viewing | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/src/mal-friend-stats/manifest.json` |
 
 <br />
 

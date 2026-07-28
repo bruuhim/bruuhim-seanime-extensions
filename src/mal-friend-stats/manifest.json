@@ -1,16 +1,16 @@
 {
   "id": "mal-friend-stats",
   "name": "MAL Friend Stats",
-  "version": "0.0.3",
-  "manifestURI": "https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/refs/heads/main/src/mal-friend-stats/manifest.json",
+  "version": "0.0.4",
+  "manifestURI": "https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/src/mal-friend-stats/manifest.json",
   "language": "typescript",
   "type": "plugin",
   "description": "Shows which of your MyAnimeList friends are watching or have rated the anime you're viewing",
   "author": "Bruuhim",
-  "icon": "",
+  "icon": "https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/assets/mal-friend-stats.png",
   "website": "",
   "lang": "multi",
-  "payloadURI": "https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/refs/heads/main/src/mal-friend-stats/main.ts",
+  "payloadURI": "https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/src/mal-friend-stats/main.ts",
   "plugin": {
     "version": "1",
     "permissions": {
