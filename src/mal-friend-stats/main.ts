@@ -56,6 +56,7 @@ function init() {
         }
 
         const friendsCache = new Map<string, { value: FriendEntry[], expiresAt: number }>()
+        const animeListCache = new Map<string, { value: any[], expiresAt: number }>()
 
         // ──────────────────────────────── Constants ────────────────────────────────
 
@@ -155,67 +156,75 @@ function init() {
             const results: FriendEntry[] = []
             const limit = Math.min(parsedFriends.length, MAX_FRIENDS)
 
-            for (let i = 0; i < limit; i++) {
-                const friend = parsedFriends[i]
-                console.log(`[${i+1}/${limit}] mal-friend-stats: checking friend: ${friend.username}`)
-
-                if (i > 0) {
-                    // Stagger request to be polite to MAL servers
-                    await new Promise<void>(r => ctx.setTimeout(r, 150))
-                }
-
-                let offset = 0
-                let match: any = null
+            const promises = parsedFriends.slice(0, limit).map(async (friend, index) => {
+                const cacheKey = friend.username.toLowerCase()
+                const cachedList = animeListCache.get(cacheKey)
+                const now = Date.now()
                 
-                try {
-                    while (offset < 900) {
-                        const listUrl = `https://myanimelist.net/animelist/${encodeURIComponent(friend.username)}/load.json?status=7&offset=${offset}`
-                        const listResp = await ctx.fetch(listUrl)
-                        if (!listResp || !listResp.ok) {
-                            console.log(`mal-friend-stats: failed to fetch animelist for ${friend.username} at offset ${offset}, status: ${listResp?.status}`)
-                            break
+                let listData: any[] = []
+                
+                if (cachedList && cachedList.expiresAt > now) {
+                    console.log(`mal-friend-stats: cache hit for friend animelist: ${friend.username}`)
+                    listData = cachedList.value
+                } else {
+                    console.log(`mal-friend-stats: cache miss for friend animelist: ${friend.username}. Fetching from MAL...`)
+                    // Stagger network requests slightly to be polite to MAL servers
+                    await new Promise<void>(r => ctx.setTimeout(r, index * 80))
+                    
+                    let offset = 0
+                    try {
+                        while (offset < 900) {
+                            const listUrl = `https://myanimelist.net/animelist/${encodeURIComponent(friend.username)}/load.json?status=7&offset=${offset}`
+                            const listResp = await ctx.fetch(listUrl)
+                            if (!listResp || !listResp.ok) {
+                                console.log(`mal-friend-stats: failed to fetch animelist for ${friend.username} at offset ${offset}, status: ${listResp?.status}`)
+                                break
+                            }
+                            
+                            const pageData = listResp.json<any[]>()
+                            if (!pageData || !pageData.length) {
+                                break
+                            }
+                            
+                            listData = listData.concat(pageData)
+                            
+                            if (pageData.length < 300) {
+                                break
+                            }
+                            
+                            offset += 300
+                            await new Promise<void>(r => ctx.setTimeout(r, 50))
                         }
                         
-                        const pageData = listResp.json<any[]>()
-                        if (!pageData || !pageData.length) {
-                            break
-                        }
-
-                        match = pageData.find(e => e.anime_id === malId)
-                        if (match) {
-                            break
-                        }
-                        
-                        if (pageData.length < 300) {
-                            break
-                        }
-                        
-                        offset += 300
-                        await new Promise<void>(r => ctx.setTimeout(r, 50))
+                        animeListCache.set(cacheKey, {
+                            value: listData,
+                            expiresAt: now + CACHE_TTL_MS
+                        })
+                    } catch (err) {
+                        console.error(`mal-friend-stats: error checking animelist for friend ${friend.username}:`, err)
+                        return
                     }
-                } catch (err) {
-                    console.error(`mal-friend-stats: error checking animelist for friend ${friend.username}:`, err)
-                    continue
                 }
 
-                if (!match) {
+                const match = listData.find(e => e.anime_id === malId)
+                if (match) {
+                    console.log(`mal-friend-stats: MATCH FOUND! friend ${friend.username} status: ${match.status}, score: ${match.score}, progress: ${match.num_watched_episodes}`)
+                    results.push({
+                        status: mapMALStatus(match.status),
+                        score: (match.score || 0) * 10,
+                        progress: match.num_watched_episodes || 0,
+                        totalEpisodes: match.anime_num_episodes ?? undefined,
+                        user: {
+                            name: friend.username,
+                            avatar: friend.avatar || undefined,
+                        },
+                    })
+                } else {
                     console.log(`mal-friend-stats: friend ${friend.username} has NOT watched anime MAL ID ${malId}`)
-                    continue
                 }
+            })
 
-                console.log(`mal-friend-stats: MATCH FOUND! friend ${friend.username} status: ${match.status}, score: ${match.score}, progress: ${match.num_watched_episodes}`)
-                
-                results.push({
-                    status: mapMALStatus(match.status),
-                    score: (match.score || 0) * 10,
-                    progress: match.num_watched_episodes || 0,
-                    totalEpisodes: match.anime_num_episodes ?? undefined,
-                    user: {
-                        name: friend.username,
-                        avatar: friend.avatar || undefined,
-                    },
-                })
-            }
+            await Promise.all(promises)
 
             console.log(`mal-friend-stats: finished fetching. Found ${results.length} matching friends who watched MAL ID ${malId}`)
             return results
