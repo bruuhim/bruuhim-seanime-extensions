@@ -3,6 +3,15 @@
 /// <reference path="./app.d.ts" />
 /// <reference path="./core.d.ts" />
 
+declare namespace $ui {
+    interface Context {
+        newWebview(options: { slot: string; fullWidth?: boolean; autoHeight?: boolean }): any
+        cache: {
+            getOrSet<T>(key: string, fn: () => T, ttlMs?: number): T
+        }
+    }
+}
+
 function init() {
     $ui.register((ctx) => {
 
@@ -136,16 +145,14 @@ function init() {
         }
 
         function getMALUsername(): string | null {
-            console.log("mal-friend-stats: getMALUsername checking sources...")
-            try {
-                const pref = $getUserPreference("MALUsername")
-                console.log(`mal-friend-stats: getUserPreference('MALUsername') returned: "${pref}"`)
-                if (pref) return pref
-            } catch (e) {
-                console.log("mal-friend-stats: getUserPreference failed or not set:", (e as Error).message)
+            console.log("mal-friend-stats: getMALUsername checking config...")
+            const malUser = "{{malUsername}}"
+            if (!malUser || malUser.startsWith("{{")) {
+                console.warn("mal-friend-stats: MAL username not configured in settings")
+                return null
             }
-            console.warn("mal-friend-stats: No MAL username found in preferences")
-            return null
+            console.log(`mal-friend-stats: found malUsername: "${malUser}"`)
+            return malUser
         }
 
         function fetchMalFriends(malId: number, malUsername: string): FriendEntry[] {

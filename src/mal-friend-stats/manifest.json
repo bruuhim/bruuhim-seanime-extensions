@@ -42,5 +42,17 @@
       }
     }
   },
+  "userConfig": {
+    "requiresConfig": true,
+    "version": 1,
+    "fields": [
+      {
+        "name": "malUsername",
+        "label": "MAL Username",
+        "type": "text",
+        "default": ""
+      }
+    ]
+  },
   "isDevelopment": false
 }
