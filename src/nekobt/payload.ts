@@ -149,7 +149,14 @@ if (!isBatch && epNum && epNum > 0) {
         if (!magnet) return ""
         const userkey = $getUserPreference("userkey")
         if (userkey && userkey.trim()) {
-            const cleanUserkey = userkey.trim()
+            let cleanUserkey = userkey.trim()
+            if (cleanUserkey.includes("/tracker/")) {
+                const parts = cleanUserkey.split("/tracker/")
+                if (parts.length > 1) {
+                    const subParts = parts[1].split("/")
+                    cleanUserkey = subParts[0]
+                }
+            }
             const trUrl = `https://tracker.nekobt.to/api/tracker/${cleanUserkey}/announce`
             const encodedTr = encodeURIComponent(trUrl)
             
