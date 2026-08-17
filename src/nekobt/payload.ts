@@ -234,10 +234,15 @@ if (!isBatch && epNum && epNum > 0) {
             else if (r.includes("av1")) videoCodecParam = "&videocodec=3"
         }
 
+        let epQueryParam = ""
+        if (!isBatch && episodeNumber && episodeNumber > 0) {
+            epQueryParam = `&query=${episodeNumber}`
+        }
+
         // Step 1: Resolve NekoBT media ID via ThaUnknown's TVDB mapping
         const resolvedMediaId = await this.resolveNbtMediaId(media)
         if (resolvedMediaId) {
-            const url = `${baseUrl}/torrents/search?mediaid=${resolvedMediaId}&sort_by=best&limit=50${batchParam}${videoCodecParam}`
+            const url = `${baseUrl}/torrents/search?mediaid=${resolvedMediaId}&sort_by=best&limit=50${batchParam}${videoCodecParam}${epQueryParam}`
             const response1 = await this.tryFullResponseUrl(url)
             if (response1 && response1.data && Array.isArray(response1.data.results) && response1.data.results.length > 0) {
                 this.computeQualityScores(response1.data.results)
@@ -257,7 +262,7 @@ if (!isBatch && epNum && epNum > 0) {
 
         // Step 2: TVDB ID direct API search (fallback if mapping missed)
         if (media.tvdbId) {
-            const url = `${baseUrl}/torrents/search?tvdbid=${media.tvdbId}&sort_by=best&limit=50${batchParam}${videoCodecParam}`
+            const url = `${baseUrl}/torrents/search?tvdbid=${media.tvdbId}&sort_by=best&limit=50${batchParam}${videoCodecParam}${epQueryParam}`
             const response = await this.tryFullResponseUrl(url)
             if (response && response.data && Array.isArray(response.data.results) && response.data.results.length > 0) {
                 this.computeQualityScores(response.data.results)
@@ -275,7 +280,7 @@ if (!isBatch && epNum && epNum > 0) {
 
         // Step 2.5: TMDB ID direct API search (fallback if mapping missed)
         if (media.tmdbId) {
-            const url = `${baseUrl}/torrents/search?tmdbid=${media.tmdbId}&sort_by=best&limit=50${batchParam}${videoCodecParam}`
+            const url = `${baseUrl}/torrents/search?tmdbid=${media.tmdbId}&sort_by=best&limit=50${batchParam}${videoCodecParam}${epQueryParam}`
             const response = await this.tryFullResponseUrl(url)
             if (response && response.data && Array.isArray(response.data.results) && response.data.results.length > 0) {
                 this.computeQualityScores(response.data.results)
