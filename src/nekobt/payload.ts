@@ -145,7 +145,7 @@ if (!isBatch && epNum && epNum > 0) {
     }
 
     public async getTorrentMagnetLink(torrent: AnimeTorrent): Promise<string> {
-        let magnet = torrent.magnetLink || ""
+        let magnet = torrent.magnetLink || torrent.downloadUrl || ""
         if (!magnet) return ""
         const userkey = $getUserPreference("userkey")
         if (userkey && userkey.trim()) {
@@ -622,7 +622,7 @@ private async tryQueryUrl(url: string, epNum?: number): Promise<AnimeTorrent[]> 
             leechers: typeof t.leechers === "number" ? t.leechers : (parseInt(String(t.leechers ?? "0"), 10) || 0),
             downloadCount: typeof t.completed === "number" ? t.completed : (parseInt(String(t.completed ?? "0"), 10) || 0),
             link: t.id ? `https://nekobt.to/torrents/${t.id}` : "",
-            magnetLink: t.magnet || undefined,
+            magnetLink: undefined,
             downloadUrl: t.magnet || "",
             infoHash: t.infohash ? t.infohash.toLowerCase() : undefined,
             resolution,
