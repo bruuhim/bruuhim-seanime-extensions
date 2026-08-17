@@ -40,3 +40,5 @@ declare abstract class MangaProvider {
   abstract findChapterPages(id: string): Promise<ChapterPage[]>;
   abstract getSettings(): Settings;
 }
+
+declare function LoadDoc(html: string): any;

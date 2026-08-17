@@ -22,7 +22,7 @@ class Provider {
 
     async search({ query }: QueryOptions): Promise<SearchResult[]> {
         try {
-            const url = `${this.api}/?s=${encodeURIComponent(query)}`
+            const url = `${this.api}/search?keyword=${encodeURIComponent(query)}`
             const resp = await this.fetch(url)
             const html = await resp.text()
             const $ = LoadDoc(html)
@@ -45,17 +45,17 @@ class Provider {
                      if (/\/series\/[^/]+\/\d+/.test(href)) return 
                 }
 
-                // Title - prefer the text inside the anchor first
-                let title = el.text().trim()
+                // Title - look for a title element inside the anchor first (new design)
+                let title = el.find(".tx-card-title, h3, h4, .title, .post-title").text().trim()
                 if (!title) {
-                    title = el.find("h3, h4, .title, .post-title").text().trim()
+                    title = el.text().trim()
                 }
                 
                 // Fallback: Check parent for title if anchor is wrapping an image only
                 if (!title) {
                      const container = el.closest("article, .item, .post-item, .box, li")
                      if (container.length > 0) {
-                         title = container.find("h3, h4, .title, .post-title").text().trim()
+                         title = container.find(".tx-card-title, h3, h4, .title, .post-title").text().trim()
                      }
                 }
 
@@ -64,7 +64,8 @@ class Provider {
                 // Filter
                 const queryWords = query.toLowerCase().split(" ").filter(w => w.length > 2)
                 const titleLower = title.toLowerCase()
-                const match = queryWords.length === 0 || queryWords.some(w => titleLower.includes(w))
+                const slugLower = slug.toLowerCase()
+                const match = queryWords.length === 0 || queryWords.some(w => titleLower.includes(w) || slugLower.includes(w))
                 
                 if (!match) return
 
@@ -113,7 +114,12 @@ class Provider {
             const chapters: ChapterDetails[] = []
             const seenChapters = new Set<string>()
 
-            $("a[href*='/series/" + mangaId + "/']").each((i: number, el: any) => {
+            let chapterElements = $(".chapter-link, .enhanced-chapters-grid a, #chaptersContainer a, .chapter-list a, .listing-chapters_wrap a, .wp-manga-chapter a, a.wp-manga-chapter-link")
+            if (chapterElements.length === 0) {
+                chapterElements = $("a[href*='/series/" + mangaId + "/']")
+            }
+
+            chapterElements.each((i: number, el: any) => {
                 const href = el.attr("href")
                 if (!href) return
 
@@ -125,39 +131,48 @@ class Provider {
                 seenChapters.add(chapterNum)
 
                 // Clean up title
-                let rawText = el.text().trim()
-                rawText = rawText.replace(/\s+/g, " ")
+                let titleText = el.find(".chapter-title").text().trim()
+                if (titleText) {
+                    titleText = titleText.replace(/^["'“”«»]+|["'“”«»]+$/g, "")
+                }
                 
-                const garbagePatterns = [
-                    /\d{4}/, 
-                    /(ago|min|hour|day|week|month|year)/i, 
-                    /[\d,.]+\s*(views|مشاهدة)/i, 
-                    /^\s*[\d,.]+\s*$/, 
-                    /الفصل\s*\d+/ 
-                ]
-                
-                let titleParts: string[] = []
-                const parts = rawText.split(/[\n\t•]+/) 
-                
-                for (const part of parts) {
-                    const p = part.trim()
-                    if (p.length < 2) continue
+                let title = `Chapter ${chapterNum}`
+                if (titleText) {
+                    title += ` - ${titleText}`
+                } else {
+                    let rawText = el.text().trim()
+                    rawText = rawText.replace(/\s+/g, " ")
                     
-                    let isGarbage = false
-                    for (const pattern of garbagePatterns) {
-                        if (pattern.test(p)) {
-                            isGarbage = true
-                            break
+                    const garbagePatterns = [
+                        /\d{4}/, 
+                        /(ago|min|hour|day|week|month|year)/i, 
+                        /[\d,.]+\s*(views|مشاهدة)/i, 
+                        /^\s*[\d,.]+\s*$/, 
+                        /الفصل\s*\d+/ 
+                    ]
+                    
+                    let titleParts: string[] = []
+                    const parts = rawText.split(/[\n\t•]+/) 
+                    
+                    for (const part of parts) {
+                        const p = part.trim()
+                        if (p.length < 2) continue
+                        
+                        let isGarbage = false
+                        for (const pattern of garbagePatterns) {
+                            if (pattern.test(p)) {
+                                isGarbage = true
+                                break
+                            }
+                        }
+                        if (!isGarbage && !p.includes(chapterNum)) {
+                            titleParts.push(p)
                         }
                     }
-                    if (!isGarbage && !p.includes(chapterNum)) {
-                        titleParts.push(p)
-                    }
-                }
 
-                let title = `Chapter ${chapterNum}`
-                if (titleParts.length > 0) {
-                     title += ` - ${titleParts.join(" ")}`
+                    if (titleParts.length > 0) {
+                         title += ` - ${titleParts.join(" ")}`
+                    }
                 }
 
                 chapters.push({
@@ -190,7 +205,7 @@ class Provider {
 
             const pages: ChapterPage[] = []
 
-            let images = $(".chapter-content img, .reading-content img, .page-break img")
+            let images = $(".chapter-content img, .reading-content img, .page-break img, .image_list img, .image_list canvas")
             if (images.length === 0) {
                 images = $("img[class*='wp-manga-chapter-img']")
             }
