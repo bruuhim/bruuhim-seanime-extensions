@@ -1,6 +1,11 @@
 /// <reference path="../../typing/anime-torrent-provider.d.ts" />
 /// <reference path="../../typing/core.d.ts" />
 
+interface Media {
+    tvdbId?: number
+    tmdbId?: number
+}
+
 interface NekoBTTorrent {
     id: string
     uploaded_at: number
@@ -140,7 +145,27 @@ if (!isBatch && epNum && epNum > 0) {
     }
 
     public async getTorrentMagnetLink(torrent: AnimeTorrent): Promise<string> {
-        return torrent.magnetLink || ""
+        let magnet = torrent.magnetLink || ""
+        if (!magnet) return ""
+        const userkey = $getUserPreference("userkey")
+        if (userkey && userkey.trim()) {
+            const cleanUserkey = userkey.trim()
+            const trUrl = `https://tracker.nekobt.to/api/tracker/${cleanUserkey}/announce`
+            const encodedTr = encodeURIComponent(trUrl)
+            
+            // Search for existing nekoBT tracker URL (encoded or unencoded) and replace/update it
+            const regexEncoded = /tr=https%3A%2F%2Ftracker\.nekobt\.to%2Fapi%2Ftracker%2F[a-zA-Z0-9_-]+%2Fannounce/i
+            const regexUnencoded = /tr=https:\/\/tracker\.nekobt\.to\/api\/tracker\/[a-zA-Z0-9_-]+\/announce/i
+            
+            if (regexEncoded.test(magnet)) {
+                magnet = magnet.replace(regexEncoded, `tr=${encodedTr}`)
+            } else if (regexUnencoded.test(magnet)) {
+                magnet = magnet.replace(regexUnencoded, `tr=${trUrl}`)
+            } else {
+                magnet += `&tr=${encodedTr}`
+            }
+        }
+        return magnet
     }
 
     //+ --------------------------------------------------------------------------------------------------
@@ -174,15 +199,6 @@ if (!isBatch && epNum && epNum > 0) {
     }
 
     private async resolveNbtMediaId(media: Media): Promise<string | null> {
-        await this.loadNbtTvdbMap()
-        if (!this.nbtTvdbMap) return null
-        if (media.tvdbId) {
-            const id = this.nbtTvdbMap[String(media.tvdbId)]
-            if (id) {
-                
-                return id
-            }
-        }
         return null
     }
 
@@ -235,6 +251,24 @@ if (!isBatch && epNum && epNum > 0) {
         // Step 2: TVDB ID direct API search (fallback if mapping missed)
         if (media.tvdbId) {
             const url = `${baseUrl}/torrents/search?tvdbid=${media.tvdbId}&sort_by=best&limit=50${batchParam}${videoCodecParam}`
+            const response = await this.tryFullResponseUrl(url)
+            if (response && response.data && Array.isArray(response.data.results) && response.data.results.length > 0) {
+                this.computeQualityScores(response.data.results)
+                this.mergeResults(allResultsMap, response.data.results.map(t => this.toAnimeTorrent(t, episodeNumber)), isBatch, episodeNumber, resolution)
+                if (response.data.results.length < 10 && response.data.more) {
+                    const response2 = await this.tryFullResponseUrl(`${url}&offset=50`)
+                    if (response2 && response2.data && Array.isArray(response2.data.results)) {
+                        this.computeQualityScores(response2.data.results)
+                        this.mergeResults(allResultsMap, response2.data.results.map(t => this.toAnimeTorrent(t, episodeNumber)), isBatch, episodeNumber, resolution)
+                    }
+                }
+                return this.finalizeResults(allResultsMap)
+            }
+        }
+
+        // Step 2.5: TMDB ID direct API search (fallback if mapping missed)
+        if (media.tmdbId) {
+            const url = `${baseUrl}/torrents/search?tmdbid=${media.tmdbId}&sort_by=best&limit=50${batchParam}${videoCodecParam}`
             const response = await this.tryFullResponseUrl(url)
             if (response && response.data && Array.isArray(response.data.results) && response.data.results.length > 0) {
                 this.computeQualityScores(response.data.results)
@@ -571,16 +605,18 @@ private async tryQueryUrl(url: string, epNum?: number): Promise<AnimeTorrent[]> 
             }
         }
 
+        const rawSize = typeof t.filesize === "number" ? t.filesize : (parseInt(String(t.filesize ?? "0"), 10) || 0)
         return {
             name: t.title || "Unknown",
             date,
-            size: typeof t.filesize === "number" ? t.filesize : (parseInt(String(t.filesize ?? "0"), 10) || 0),
-            formattedSize: "",
+            size: rawSize,
+            formattedSize: this.formatBytes(rawSize),
             seeders: typeof t.seeders === "number" ? t.seeders : (parseInt(String(t.seeders ?? "0"), 10) || 0),
             leechers: typeof t.leechers === "number" ? t.leechers : (parseInt(String(t.leechers ?? "0"), 10) || 0),
             downloadCount: typeof t.completed === "number" ? t.completed : (parseInt(String(t.completed ?? "0"), 10) || 0),
             link: t.id ? `https://nekobt.to/torrents/${t.id}` : "",
             magnetLink: t.magnet || undefined,
+            downloadUrl: t.magnet || "",
             infoHash: t.infohash ? t.infohash.toLowerCase() : undefined,
             resolution,
             isBatch: !!t.batch,
@@ -589,6 +625,15 @@ private async tryQueryUrl(url: string, epNum?: number): Promise<AnimeTorrent[]> 
             isBestRelease: false,
             confirmed: (episodeNumber !== -1 || !!t.batch),
         }
+    }
+
+    private formatBytes(bytes: number, decimals: number = 2): string {
+        if (bytes === 0) return "0 Bytes"
+        const k = 1024
+        const dm = decimals < 0 ? 0 : decimals
+        const sizes = ["Bytes", "KB", "MB", "GB", "TB"]
+        const i = Math.floor(Math.log(bytes) / Math.log(k))
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + " " + sizes[i]
     }
 
     private getApiUrl(): string {
@@ -657,16 +702,6 @@ private async tryQueryUrl(url: string, epNum?: number): Promise<AnimeTorrent[]> 
         }
 
         return passed
-    }
-
-    private countEpisodeMatches(results: AnimeTorrent[], episodeNumber: number): number {
-        return results.filter(t => {
-            const name = t.name.toLowerCase()
-            if (new RegExp(`s\\d+e0*${episodeNumber}(?!\\d)`, "i").test(name)) return true
-            if (new RegExp(`[-_\\s]0*${episodeNumber}(?!\\d)`, "i").test(name)) return true
-            if (new RegExp(`ep\\.?\\s*0*${episodeNumber}(?!\\d)`, "i").test(name)) return true
-            return false
-        }).length
     }
 
     private sanitizeTitle(title: string): string {
