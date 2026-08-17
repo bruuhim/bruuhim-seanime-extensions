@@ -111,78 +111,118 @@ class Provider {
             const html = await resp.text()
             const $ = LoadDoc(html)
 
+            // Find max page
+            let maxPage = 1
+            $(".pagination a").each((i: number, el: any) => {
+                const href = el.attr("href")
+                if (href) {
+                    const match = href.match(/[?&]page=(\d+)/)
+                    if (match) {
+                        const p = parseInt(match[1])
+                        if (p > maxPage) {
+                            maxPage = p
+                        }
+                    }
+                }
+            })
+
+            // Fetch all pages in parallel (pages 2 to maxPage)
+            const pagesHtml: string[] = [html]
+            if (maxPage > 1) {
+                const promises: Promise<string>[] = []
+                for (let p = 2; p <= maxPage; p++) {
+                    promises.push((async () => {
+                        try {
+                            const r = await this.fetch(`${this.api}/series/${mangaId}?page=${p}`)
+                            return await r.text()
+                        } catch (e) {
+                            return ""
+                        }
+                    })())
+                }
+                const additionalPages = await Promise.all(promises)
+                for (const pageText of additionalPages) {
+                    if (pageText) {
+                        pagesHtml.push(pageText)
+                    }
+                }
+            }
+
             const chapters: ChapterDetails[] = []
             const seenChapters = new Set<string>()
 
-            let chapterElements = $(".chapter-link, .enhanced-chapters-grid a, #chaptersContainer a, .chapter-list a, .listing-chapters_wrap a, .wp-manga-chapter a, a.wp-manga-chapter-link")
-            if (chapterElements.length === 0) {
-                chapterElements = $("a[href*='/series/" + mangaId + "/']")
-            }
-
-            chapterElements.each((i: number, el: any) => {
-                const href = el.attr("href")
-                if (!href) return
-
-                const chapterMatch = href.match(/\/series\/[^/]+\/(\d+)/)
-                if (!chapterMatch) return
-                const chapterNum = chapterMatch[1]
-
-                if (seenChapters.has(chapterNum)) return
-                seenChapters.add(chapterNum)
-
-                // Clean up title
-                let titleText = el.find(".chapter-title").text().trim()
-                if (titleText) {
-                    titleText = titleText.replace(/^["'“”«»]+|["'“”«»]+$/g, "")
+            for (const pageHtml of pagesHtml) {
+                const $page = LoadDoc(pageHtml)
+                let chapterElements = $page(".chapter-link, .enhanced-chapters-grid a, #chaptersContainer a, .chapter-list a, .listing-chapters_wrap a, .wp-manga-chapter a, a.wp-manga-chapter-link")
+                if (chapterElements.length === 0) {
+                    chapterElements = $page("a[href*='/series/" + mangaId + "/']")
                 }
-                
-                let title = `Chapter ${chapterNum}`
-                if (titleText) {
-                    title += ` - ${titleText}`
-                } else {
-                    let rawText = el.text().trim()
-                    rawText = rawText.replace(/\s+/g, " ")
+
+                chapterElements.each((i: number, el: any) => {
+                    const href = el.attr("href")
+                    if (!href) return
+
+                    const chapterMatch = href.match(/\/series\/[^/]+\/(\d+)/)
+                    if (!chapterMatch) return
+                    const chapterNum = chapterMatch[1]
+
+                    if (seenChapters.has(chapterNum)) return
+                    seenChapters.add(chapterNum)
+
+                    // Clean up title
+                    let titleText = el.find(".chapter-title").text().trim()
+                    if (titleText) {
+                        titleText = titleText.replace(/^["'“”«»]+|["'“”«»]+$/g, "")
+                    }
                     
-                    const garbagePatterns = [
-                        /\d{4}/, 
-                        /(ago|min|hour|day|week|month|year)/i, 
-                        /[\d,.]+\s*(views|مشاهدة)/i, 
-                        /^\s*[\d,.]+\s*$/, 
-                        /الفصل\s*\d+/ 
-                    ]
-                    
-                    let titleParts: string[] = []
-                    const parts = rawText.split(/[\n\t•]+/) 
-                    
-                    for (const part of parts) {
-                        const p = part.trim()
-                        if (p.length < 2) continue
+                    let title = `Chapter ${chapterNum}`
+                    if (titleText) {
+                        title += ` - ${titleText}`
+                    } else {
+                        let rawText = el.text().trim()
+                        rawText = rawText.replace(/\s+/g, " ")
                         
-                        let isGarbage = false
-                        for (const pattern of garbagePatterns) {
-                            if (pattern.test(p)) {
-                                isGarbage = true
-                                break
+                        const garbagePatterns = [
+                            /\d{4}/, 
+                            /(ago|min|hour|day|week|month|year)/i, 
+                            /[\d,.]+\s*(views|مشاهدة)/i, 
+                            /^\s*[\d,.]+\s*$/, 
+                            /الفصل\s*\d+/ 
+                        ]
+                        
+                        let titleParts: string[] = []
+                        const parts = rawText.split(/[\n\t•]+/) 
+                        
+                        for (const part of parts) {
+                            const p = part.trim()
+                            if (p.length < 2) continue
+                            
+                            let isGarbage = false
+                            for (const pattern of garbagePatterns) {
+                                if (pattern.test(p)) {
+                                    isGarbage = true
+                                    break
+                                }
+                            }
+                            if (!isGarbage && !p.includes(chapterNum)) {
+                                titleParts.push(p)
                             }
                         }
-                        if (!isGarbage && !p.includes(chapterNum)) {
-                            titleParts.push(p)
+
+                        if (titleParts.length > 0) {
+                             title += ` - ${titleParts.join(" ")}`
                         }
                     }
 
-                    if (titleParts.length > 0) {
-                         title += ` - ${titleParts.join(" ")}`
-                    }
-                }
-
-                chapters.push({
-                    id: `${mangaId}$${chapterNum}`,
-                    url: href,
-                    title: title,
-                    chapter: chapterNum,
-                    index: 0
+                    chapters.push({
+                        id: `${mangaId}$${chapterNum}`,
+                        url: href,
+                        title: title,
+                        chapter: chapterNum,
+                        index: 0
+                    })
                 })
-            })
+            }
 
             chapters.sort((a, b) => parseInt(b.chapter) - parseInt(a.chapter))
             chapters.forEach((chapter, index) => {
