@@ -224,7 +224,7 @@ class Provider {
                 })
             }
 
-            chapters.sort((a, b) => parseInt(b.chapter) - parseInt(a.chapter))
+            chapters.sort((a, b) => parseFloat(a.chapter) - parseFloat(b.chapter))
             chapters.forEach((chapter, index) => {
                 chapter.index = index
             })
