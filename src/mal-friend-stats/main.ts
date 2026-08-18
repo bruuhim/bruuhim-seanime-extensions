@@ -3,15 +3,6 @@
 /// <reference path="./app.d.ts" />
 /// <reference path="./core.d.ts" />
 
-declare namespace $ui {
-    interface Context {
-        newWebview(options: { slot: string; fullWidth?: boolean; autoHeight?: boolean }): any
-        cache: {
-            getOrSet<T>(key: string, fn: () => T, ttlMs?: number): T
-        }
-    }
-}
-
 function init() {
     $ui.register((ctx) => {
 
@@ -28,34 +19,13 @@ function init() {
             }
         }
 
-        interface JikanUser {
+        interface MalFriend {
             username: string
-            images?: { webp?: { image_url?: string } }
-        }
-
-        interface JikanFriendEntry {
-            user: JikanUser
-        }
-
-        interface JikanFriendsResponse {
-            data: JikanFriendEntry[]
-        }
-
-        interface JikanAnimeEntry {
-            anime: {
-                mal_id: number
-                episodes?: number
-            }
-            status: string
-            score: number
-            episodes_watched: number
-        }
-
-        interface JikanListResponse {
-            data: JikanAnimeEntry[]
+            avatar: string
         }
 
         const friendsCache = new Map<string, { value: FriendEntry[], expiresAt: number }>()
+        const friendsListCache = new Map<string, { value: MalFriend[], expiresAt: number }>()
         const animeListCache = new Map<string, { value: any[], expiresAt: number }>()
 
         // ──────────────────────────────── Constants ────────────────────────────────
@@ -110,12 +80,19 @@ function init() {
             return malUser
         }
 
-        async function fetchMalFriends(malId: number, malUsername: string): Promise<FriendEntry[]> {
-            console.log(`mal-friend-stats: fetchMalFriends starting for MAL ID: ${malId}, user: ${malUsername}`)
-            
+        async function fetchFriendList(malUsername: string): Promise<MalFriend[]> {
+            const cacheKey = `friends-list-${malUsername}`
+            const now = Date.now()
+
+            const cached = friendsListCache.get(cacheKey)
+            if (cached && cached.expiresAt > now) {
+                console.log(`mal-friend-stats: cache hit for friends list of ${malUsername}`)
+                return cached.value
+            }
+
+            console.log(`mal-friend-stats: fetching friends list directly from MAL profile page`)
             const friendsUrl = `https://myanimelist.net/profile/${encodeURIComponent(malUsername)}/friends`
-            console.log(`mal-friend-stats: fetching friends list directly from: ${friendsUrl}`)
-            
+
             let friendsHtml = ""
             try {
                 const friendsHtmlResp = await ctx.fetch(friendsUrl)
@@ -130,8 +107,8 @@ function init() {
             }
 
             const parts = friendsHtml.split('<div class="boxlist col-3">')
-            const parsedFriends: { username: string, avatar: string }[] = []
-            
+            const parsed: MalFriend[] = []
+
             for (let i = 1; i < parts.length; i++) {
                 const part = parts[i]
                 const userMatch = part.match(/href="https:\/\/myanimelist\.net\/profile\/([^"/?#\s]+)"/)
@@ -147,65 +124,79 @@ function init() {
                             avatar = srcMatch[1]
                         }
                     }
-                    parsedFriends.push({ username, avatar })
+                    parsed.push({ username, avatar })
                 }
             }
 
-            console.log(`mal-friend-stats: parsed ${parsedFriends.length} friends. Checking up to ${MAX_FRIENDS}...`)
-            
-            const results: FriendEntry[] = []
-            const limit = Math.min(parsedFriends.length, MAX_FRIENDS)
+            friendsListCache.set(cacheKey, { value: parsed, expiresAt: now + CACHE_TTL_MS })
+            return parsed
+        }
 
-            const promises = parsedFriends.slice(0, limit).map(async (friend, index) => {
-                const cacheKey = friend.username.toLowerCase()
-                const cachedList = animeListCache.get(cacheKey)
-                const now = Date.now()
-                
-                let listData: any[] = []
-                
-                if (cachedList && cachedList.expiresAt > now) {
-                    console.log(`mal-friend-stats: cache hit for friend animelist: ${friend.username}`)
-                    listData = cachedList.value
-                } else {
-                    console.log(`mal-friend-stats: cache miss for friend animelist: ${friend.username}. Fetching from MAL...`)
-                    // Stagger network requests slightly to be polite to MAL servers
-                    await new Promise<void>(r => ctx.setTimeout(r, index * 80))
-                    
-                    let offset = 0
-                    try {
-                        while (offset < 900) {
-                            const listUrl = `https://myanimelist.net/animelist/${encodeURIComponent(friend.username)}/load.json?status=7&offset=${offset}`
-                            const listResp = await ctx.fetch(listUrl)
-                            if (!listResp || !listResp.ok) {
-                                console.log(`mal-friend-stats: failed to fetch animelist for ${friend.username} at offset ${offset}, status: ${listResp?.status}`)
-                                break
-                            }
-                            
-                            const pageData = listResp.json<any[]>()
-                            if (!pageData || !pageData.length) {
-                                break
-                            }
-                            
-                            listData = listData.concat(pageData)
-                            
-                            if (pageData.length < 300) {
-                                break
-                            }
-                            
-                            offset += 300
-                            await new Promise<void>(r => ctx.setTimeout(r, 50))
-                        }
-                        
-                        animeListCache.set(cacheKey, {
-                            value: listData,
-                            expiresAt: now + CACHE_TTL_MS
-                        })
-                    } catch (err) {
-                        console.error(`mal-friend-stats: error checking animelist for friend ${friend.username}:`, err)
-                        return
+        // Fetches a single friend's animelist (paginated only when necessary).
+        // Returns [] on failure so the caller can continue with the other friends.
+        async function fetchAnimeList(friend: MalFriend, malId: number): Promise<any[]> {
+            const cacheKey = friend.username.toLowerCase()
+            const now = Date.now()
+
+            const cachedList = animeListCache.get(cacheKey)
+            if (cachedList && cachedList.expiresAt > now) {
+                return cachedList.value
+            }
+
+            let listData: any[] = []
+            let offset = 0
+            try {
+                while (offset < 900) {
+                    const listUrl = `https://myanimelist.net/animelist/${encodeURIComponent(friend.username)}/load.json?status=7&offset=${offset}`
+                    const listResp = await ctx.fetch(listUrl)
+                    if (!listResp || !listResp.ok) {
+                        console.log(`mal-friend-stats: failed to fetch animelist for ${friend.username} at offset ${offset}, status: ${listResp?.status}`)
+                        break
                     }
+
+                    const pageData = listResp.json<any[]>()
+                    if (!pageData || !pageData.length) {
+                        break
+                    }
+
+                    listData = listData.concat(pageData)
+
+                    // Early exit once we found the target anime, or when the page
+                    // was not completely full (no more pages exist).
+                    if (pageData.length < 300 || listData.some(e => e.anime_id === malId)) {
+                        break
+                    }
+
+                    offset += 300
                 }
 
+                animeListCache.set(cacheKey, {
+                    value: listData,
+                    expiresAt: now + CACHE_TTL_MS
+                })
+            } catch (err) {
+                console.error(`mal-friend-stats: error checking animelist for friend ${friend.username}:`, err)
+            }
+
+            return listData
+        }
+
+        async function fetchMalFriends(malId: number, malUsername: string): Promise<FriendEntry[]> {
+            const friends = await fetchFriendList(malUsername)
+            console.log(`mal-friend-stats: parsed ${friends.length} friends. Checking up to ${MAX_FRIENDS}...`)
+
+            const limit = Math.min(friends.length, MAX_FRIENDS)
+            const results: FriendEntry[] = []
+
+            // Fetch ALL friend animelists in parallel — no staggering, no
+            // artificial delays. Worst case is one network round-trip.
+            const lists = await Promise.all(
+                friends.slice(0, limit).map((friend) => fetchAnimeList(friend, malId))
+            )
+
+            for (let i = 0; i < limit; i++) {
+                const friend = friends[i]
+                const listData = lists[i] || []
                 const match = listData.find(e => e.anime_id === malId)
                 if (match) {
                     console.log(`mal-friend-stats: MATCH FOUND! friend ${friend.username} status: ${match.status}, score: ${match.score}, progress: ${match.num_watched_episodes}`)
@@ -222,9 +213,7 @@ function init() {
                 } else {
                     console.log(`mal-friend-stats: friend ${friend.username} has NOT watched anime MAL ID ${malId}`)
                 }
-            })
-
-            await Promise.all(promises)
+            }
 
             console.log(`mal-friend-stats: finished fetching. Found ${results.length} matching friends who watched MAL ID ${malId}`)
             return results
@@ -324,7 +313,7 @@ function init() {
                 return
             }
 
-            console.log("mal-friend-stats: Setting loading state to true and retrieving from cache or Jikan...")
+            console.log("mal-friend-stats: Setting loading state to true and retrieving from cache or MAL...")
             loading.set(true)
 
             ;(async () => {
@@ -337,7 +326,7 @@ function init() {
                     if (cached && cached.expiresAt > now) {
                         entries = cached.value
                     } else {
-                        console.log(`mal-friend-stats: cache miss or expired for ${cacheKey}. Fetching from Jikan...`)
+                        console.log(`mal-friend-stats: cache miss or expired for ${cacheKey}. Fetching from MAL...`)
                         entries = await fetchMalFriends(malId, malUser)
                         friendsCache.set(cacheKey, {
                             value: entries,
