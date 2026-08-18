@@ -31,9 +31,12 @@ function init() {
 
         // ──────────────────────────────── Constants ────────────────────────────────
 
+        const PLUGIN_VERSION = "1.0.3"
+
         const FRIENDS_LIST_TTL_MS = 60 * 60 * 1000  // 1h
         const LIST_TTL_MS = 60 * 60 * 1000          // 1h
         const RESULT_TTL_MS = 24 * 60 * 60 * 1000   // 24h
+        const MALID_TTL_MS = 7 * 24 * 60 * 60 * 1000 // 7d
 
         // ──────────────────────────────── Cache helpers ($storage-backed) ──────────
         // Two layers:
@@ -68,6 +71,21 @@ function init() {
             }
         }
 
+        // ──────────────────────────────── Version-based cache reset ──────────────
+        // When the plugin updates (version bump), wipe all persistent caches so
+        // users never see results computed by an older build.
+        try {
+            const storedVer = $storage.get<{ v?: string }>("mfs:version")
+            if (storedVer && storedVer.v !== PLUGIN_VERSION) {
+                $storage.clear()
+                $storage.set("mfs:version", { v: PLUGIN_VERSION })
+            } else if (!storedVer) {
+                $storage.set("mfs:version", { v: PLUGIN_VERSION })
+            }
+        } catch (err) {
+            // storage unavailable — skip version handling
+        }
+
         // ──────────────────────────────── Helpers ────────────────────────────────
 
         function mapMALStatus(statusNum: number, mediaType: MediaType): string {
@@ -81,18 +99,40 @@ function init() {
             }
         }
 
-        function getMalMediaId(anilistId: number): number | null {
-            const token = $database.anilist.getToken()
-            if (!token) {
-                return null
+        // Resolves an AniList media ID to its MAL ID. Async + timeout-bounded so a
+        // slow/unreachable AniList can never hang the plugin. Cached for 7 days.
+        async function getMalMediaId(anilistId: number): Promise<number | null> {
+            const cacheKey = `mfs:malid:${anilistId}`
+            const cached = cacheGet(cacheKey)
+            if (cached) {
+                return cached.value
             }
+
+            const token = $database.anilist.getToken()
             try {
                 const query = `query ($id: Int) { Media(id: $id) { idMal } }`
-                const res = $anilist.customQuery<{ Media: { idMal: number | null } }>(
-                    { query, variables: { id: anilistId } },
-                    token,
-                )
-                return res?.Media?.idMal ?? null
+                const headers: Record<string, string> = {
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                }
+                if (token) {
+                    headers["Authorization"] = `Bearer ${token}`
+                }
+                const res = await ctx.fetch("https://graphql.anilist.co", {
+                    method: "POST",
+                    headers,
+                    body: JSON.stringify({ query, variables: { id: anilistId } }),
+                    timeout: 10,
+                })
+                if (!res || !res.ok) {
+                    return null
+                }
+                const data = res.json<{ data?: { Media?: { idMal?: number | null } } }>()
+                const malId = data?.data?.Media?.idMal ?? null
+                if (malId) {
+                    cacheSet(cacheKey, malId, MALID_TTL_MS)
+                }
+                return malId
             } catch (err) {
                 return null
             }
@@ -118,7 +158,7 @@ function init() {
 
             let friendsHtml = ""
             try {
-                const friendsHtmlResp = await ctx.fetch(friendsUrl)
+                const friendsHtmlResp = await ctx.fetch(friendsUrl, { timeout: 15 })
                 if (!friendsHtmlResp || !friendsHtmlResp.ok) {
                     return []
                 }
@@ -180,7 +220,7 @@ function init() {
             try {
                 while (offset < 900) {
                     const listUrl = `https://myanimelist.net/${mediaType}list/${encodeURIComponent(friend.username)}/load.json?status=7&offset=${offset}`
-                    const listResp = await ctx.fetch(listUrl)
+                    const listResp = await ctx.fetch(listUrl, { timeout: 15 })
                     if (!listResp || !listResp.ok) {
                         break
                     }
@@ -339,6 +379,11 @@ function init() {
         ctx.screen.loadCurrent()
 
         // ── Main effect ──
+        // All network work happens inside the async IIFE so the effect function
+        // itself returns immediately. This keeps Seanime's infinite-loop guard
+        // (effectStack) from ever flagging this effect, and the navToken guard
+        // discards stale runs when the user navigates mid-fetch.
+        let navToken = 0
         ctx.effect(() => {
             const id = mediaId.get()
             const type = mediaType.get()
@@ -363,48 +408,47 @@ function init() {
             configured.set(true)
 
             // Show the panel with the loading spinner immediately, before any
-            // network work (MAL ID mapping + friend fetches) happens.
+            // network work happens.
             loading.set(true)
             panel.show()
 
-            let malId: number | null = null
-            try {
-                malId = ctx.cache.getOrSet(`mal-id-${id}`, () => {
-                    const resolved = getMalMediaId(id)
-                    if (!resolved) {
-                        throw new Error("MAL ID mapping returned null")
-                    }
-                    return resolved
-                }, 24 * 60 * 60 * 1000) as number
-            } catch (err) {
-                // Mapping failed — fall through and hide the panel.
-            }
+            const myToken = ++navToken
 
-            if (!malId) {
-                friends.set([])
-                loading.set(false)
-                panel.hide()
-                return
-            }
-
-            const cacheKey = `mfs:result:${type}:${malUser}:${malId}`
-            const cached = cacheGet(cacheKey)
-
-            if (cached) {
-                // Instant path: cached answer — no need to show the spinner.
-                friends.set(cached.value)
-                loading.set(false)
-                if (cached.value.length > 0) {
-                    panel.show()
-                } else {
-                    panel.hide()
+            // Failsafe: never let the spinner stay stuck. If nothing has
+            // finished after 45s, give up gracefully.
+            const cancelFailsafe = ctx.setTimeout(() => {
+                if (myToken === navToken) {
+                    loading.set(false)
                 }
-                return
-            }
+            }, 45 * 1000)
 
             ;(async () => {
                 try {
+                    // Resolve the MAL ID (async + timeout-bounded, cached 7 days).
+                    const malId = await getMalMediaId(id)
+                    if (myToken !== navToken) return
+                    if (!malId) {
+                        friends.set([])
+                        panel.hide()
+                        return
+                    }
+
+                    const cacheKey = `mfs:result:${type}:${malUser}:${malId}`
+                    const cached = cacheGet(cacheKey)
+
+                    if (cached) {
+                        // Instant path: cached answer — no need to show the spinner.
+                        friends.set(cached.value)
+                        if (cached.value.length > 0) {
+                            panel.show()
+                        } else {
+                            panel.hide()
+                        }
+                        return
+                    }
+
                     const entries = await fetchMalFriends(malId, malUser, type)
+                    if (myToken !== navToken) return
                     cacheSet(cacheKey, entries, RESULT_TTL_MS)
                     friends.set(entries)
                     if (entries.length > 0) {
@@ -413,10 +457,14 @@ function init() {
                         panel.hide()
                     }
                 } catch (err) {
+                    if (myToken !== navToken) return
                     friends.set([])
                     panel.hide()
                 } finally {
-                    loading.set(false)
+                    if (myToken === navToken) {
+                        loading.set(false)
+                    }
+                    cancelFailsafe()
                 }
             })()
         }, [mediaId, mediaType])
