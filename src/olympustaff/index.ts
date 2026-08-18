@@ -250,6 +250,7 @@ class Provider {
                 images = $("img[class*='wp-manga-chapter-img']")
             }
 
+            let pageIndex = 0
             images.each((i: number, el: any) => {
                 let src = el.attr("data-src")?.trim() || 
                             el.attr("src")?.trim() ||
@@ -260,9 +261,22 @@ class Provider {
                 }
 
                 if (src && !src.includes("logo") && !src.includes("icon")) {
+                    // Filter out promotional banners:
+                    // 1. Must contain /uploads/ (standard for manga pages on OlympusStaff)
+                    // 2. Parent link (if exists) must not point to external domains
+                    if (!src.includes("/uploads/")) return
+
+                    const parentA = el.parent("a")
+                    if (parentA.length > 0) {
+                        const parentHref = parentA.attr("href")
+                        if (parentHref && parentHref.startsWith("http") && !parentHref.includes("olympustaff.com")) {
+                            return
+                        }
+                    }
+
                     pages.push({
                         url: src,
-                        index: i,
+                        index: pageIndex++,
                         headers: {
                             "Referer": this.api + "/"
                         }
