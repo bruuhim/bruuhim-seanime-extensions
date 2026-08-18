@@ -27,12 +27,12 @@
 
 These providers are optimized for stability, featuring AJAX fallbacks and Cloudflare bypass logic.
 
-| Provider                  | Description                            | Installation Manifest (URL)                                                                                              |
-| :------------------------ | :------------------------------------- | :----------------------------------------------------------------------------------------------------------------------- |
-| **3asq (Arabic)**         | Premium Arabic manga from 3asq.org     | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/src/3asq/3asq.json`               |
-| **AzoraMoon (Arabic)**    | Fast Arabic manga from azoramoon.com   | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/src/azoramoon/azoramoon.json`     |
-| **MangaTuk (Arabic)**     | Arabic manga from mangatuk.com         | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/src/mangatuk/mangatuk.json`       |
-| **OlympusStaff (Arabic)** | Extensive library from olympustaff.com | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/src/olympustaff/olympustaff.json` |
+| Provider                  | Version | Description                            | Installation Manifest (URL)                                                                                              |
+| :------------------------ | :------ | :------------------------------------- | :----------------------------------------------------------------------------------------------------------------------- |
+| **3asq (Arabic)**         | 1.0.0   | Premium Arabic manga from 3asq.org     | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/src/3asq/3asq.json`               |
+| **AzoraMoon (Arabic)**    | 1.0.0   | Fast Arabic manga from azoramoon.com   | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/src/azoramoon/azoramoon.json`     |
+| **MangaTuk (Arabic)**     | 1.0.0   | Arabic manga from mangatuk.com         | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/src/mangatuk/mangatuk.json`       |
+| **OlympusStaff (Arabic)** | 1.0.2   | Extensive library from olympustaff.com | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/src/olympustaff/olympustaff.json` |
 
 <br />
 
@@ -40,9 +40,9 @@ These providers are optimized for stability, featuring AJAX fallbacks and Cloudf
 
 Seanime anime torrent providers to get access to extra torrent indexers.
 
-| Provider | Description | Installation Manifest (URL) |
-| :--- | :--- | :--- |
-| <img src="assets/nekobt.png" width="24" height="24" /> **nekoBT** | nekoBT torrent search provider using quality-aware sort-by-best scoring | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/src/nekobt/nekobt.json` |
+| Provider | Version | Description | Installation Manifest (URL) |
+| :--- | :--- | :--- | :--- |
+| <img src="assets/nekobt.png" width="24" height="24" /> **nekoBT** | 1.0.2 | nekoBT torrent search provider with private-tracker `userkey` support and quality-aware sort-by-best scoring | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/src/nekobt/nekobt.json` |
 
 <br />
 
@@ -50,9 +50,9 @@ Seanime anime torrent providers to get access to extra torrent indexers.
 
 Seanime plugin extensions that enhance your anime browsing experience directly within the Seanime app.
 
-| Plugin | Description | Installation Manifest (URL) |
-| :--- | :--- | :--- |
-| <img src="assets/mal-friend-stats.png" width="24" height="24" /> **MAL Friend Stats** | Shows which of your MyAnimeList friends are watching or have rated the anime you're viewing | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/src/mal-friend-stats/manifest.json` |
+| Plugin | Version | Description | Installation Manifest (URL) |
+| :--- | :--- | :--- | :--- |
+| <img src="assets/mal-friend-stats.png" width="24" height="24" /> **MAL Friend Stats** | 1.0.3 | Shows which of your MyAnimeList friends are watching, have read, or rated the **anime or manga** you're viewing — checks your entire friend list | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/src/mal-friend-stats/manifest.json` |
 
 <br />
 
@@ -92,8 +92,11 @@ _Note: For browser extensions (Open-in-Seanime/MAL-Button), please follow the sp
 ## ⚙️ Technical Details
 
 - **Dual-Method Chapter Extraction**: Combines Static Site Rendering (SSR) and AJAX calls for 99% reliability on Madara/WordPress sites.
-- **Dynamic Header Spoofing**: Built-in User-Agent rotation and Referer management to handle Cloudflare-protected sites like LekManga.
+- **Parallel Pagination**: Manga chapter lists are fetched from every page at once — no missing chapters, even on sites that paginate 40 per page.
 - **Lazy Load Awareness**: Correctly parses `data-src` attributes to ensure zero missing pages in the reader.
+- **Smart Ad-Banner Filtering**: Manga pages are whitelisted (`/uploads/manga_`) so promotional banners never leak into the reader.
+- **Persistent Smart Caching**: Plugins use Seanime's `$storage` for multi-day caching, with a **version-based cache wipe** so every update starts fresh.
+- **Timeout-Bounded Networking**: All external calls have explicit timeouts — a slow or unreachable API can never freeze a plugin.
 
 ---
 
