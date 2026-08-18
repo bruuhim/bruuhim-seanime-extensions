@@ -81,36 +81,27 @@ function init() {
         }
 
         function getMalMediaId(anilistId: number): number | null {
-            console.log(`mal-friend-stats: getMalMediaId called for AniList ID: ${anilistId}`)
             const token = $database.anilist.getToken()
             if (!token) {
-                console.warn("mal-friend-stats: AniList token is missing or not configured")
                 return null
             }
             try {
                 const query = `query ($id: Int) { Media(id: $id) { idMal } }`
-                console.log("mal-friend-stats: sending custom GraphQL query for idMal mapping...")
                 const res = $anilist.customQuery<{ Media: { idMal: number | null } }>(
                     { query, variables: { id: anilistId } },
                     token,
                 )
-                const malId = res?.Media?.idMal ?? null
-                console.log(`mal-friend-stats: GraphQL mapped AniList ID ${anilistId} -> MAL ID ${malId}`)
-                return malId
+                return res?.Media?.idMal ?? null
             } catch (err) {
-                console.error("mal-friend-stats: failed to get MAL id:", err)
                 return null
             }
         }
 
         function getMALUsername(): string | null {
-            console.log("mal-friend-stats: getMALUsername checking config...")
             const malUser = "{{malUsername}}"
             if (!malUser || malUser.startsWith("{{")) {
-                console.warn("mal-friend-stats: MAL username not configured in settings")
                 return null
             }
-            console.log(`mal-friend-stats: found malUsername: "${malUser}"`)
             return malUser
         }
 
@@ -119,23 +110,19 @@ function init() {
 
             const cached = cacheGet(cacheKey)
             if (cached) {
-                console.log(`mal-friend-stats: cache hit for friends list of ${malUsername}`)
                 return cached.value
             }
 
-            console.log(`mal-friend-stats: fetching friends list directly from MAL profile page`)
             const friendsUrl = `https://myanimelist.net/profile/${encodeURIComponent(malUsername)}/friends`
 
             let friendsHtml = ""
             try {
                 const friendsHtmlResp = await ctx.fetch(friendsUrl)
                 if (!friendsHtmlResp || !friendsHtmlResp.ok) {
-                    console.error(`mal-friend-stats: failed to fetch friends list page for ${malUsername}, status: ${friendsHtmlResp?.status}`)
                     return []
                 }
                 friendsHtml = friendsHtmlResp.text()
             } catch (err) {
-                console.error(`mal-friend-stats: error fetching friends list from MAL:`, err)
                 return []
             }
 
@@ -192,7 +179,6 @@ function init() {
                     const listUrl = `https://myanimelist.net/animelist/${encodeURIComponent(friend.username)}/load.json?status=7&offset=${offset}`
                     const listResp = await ctx.fetch(listUrl)
                     if (!listResp || !listResp.ok) {
-                        console.log(`mal-friend-stats: failed to fetch animelist for ${friend.username} at offset ${offset}, status: ${listResp?.status}`)
                         break
                     }
 
@@ -218,7 +204,7 @@ function init() {
 
                 cacheSet(cacheKey, listData, ANIME_LIST_TTL_MS, complete)
             } catch (err) {
-                console.error(`mal-friend-stats: error checking animelist for friend ${friend.username}:`, err)
+                // Silently ignore — caller continues with the other friends.
             }
 
             return listData
@@ -226,7 +212,6 @@ function init() {
 
         async function fetchMalFriends(malId: number, malUsername: string): Promise<FriendEntry[]> {
             const friends = await fetchFriendList(malUsername)
-            console.log(`mal-friend-stats: parsed ${friends.length} friends. Checking up to ${MAX_FRIENDS}...`)
 
             const limit = Math.min(friends.length, MAX_FRIENDS)
             const results: FriendEntry[] = []
@@ -242,7 +227,6 @@ function init() {
                 const listData = lists[i] || []
                 const match = listData.find(e => e.anime_id === malId)
                 if (match) {
-                    console.log(`mal-friend-stats: MATCH FOUND! friend ${friend.username} status: ${match.status}, score: ${match.score}, progress: ${match.num_watched_episodes}`)
                     results.push({
                         status: mapMALStatus(match.status),
                         score: (match.score || 0) * 10,
@@ -253,12 +237,9 @@ function init() {
                             avatar: friend.avatar || undefined,
                         },
                     })
-                } else {
-                    console.log(`mal-friend-stats: friend ${friend.username} has NOT watched anime MAL ID ${malId}`)
                 }
             }
 
-            console.log(`mal-friend-stats: finished fetching. Found ${results.length} matching friends who watched MAL ID ${malId}`)
             return results
         }
 
@@ -297,28 +278,31 @@ function init() {
                     $os.cmd("xdg-open", url).start()
                 }
             } catch (err) {
-                console.error("mal-friend-stats: failed to open url", err)
+                // Silently ignore — unable to open the URL.
             }
             openUrl.set("")
         }, [openUrl])
 
         // ── Track navigation ──
         ctx.screen.onNavigate((e) => {
-            console.log("mal-friend-stats: onNavigate triggered:", e.pathname, JSON.stringify(e.searchParams))
             const id = e.pathname === "/entry" && !!e.searchParams.id
                 ? parseInt(e.searchParams.id)
                 : 0
-            console.log(`mal-friend-stats: resolved mediaId from navigation: ${id}`)
             mediaId.set(id)
+            // Show the loading state as soon as we land on an anime page so the
+            // user always sees feedback while the plugin is working.
+            if (id) {
+                friends.set([])
+                loading.set(true)
+                panel.show()
+            }
         })
         ctx.screen.loadCurrent()
 
         // ── Main effect ──
         ctx.effect(() => {
             const id = mediaId.get()
-            console.log(`mal-friend-stats: Main effect triggered. mediaId = ${id}`)
             if (!id) {
-                console.log("mal-friend-stats: No mediaId, cleaning up and hiding panel.")
                 friends.set([])
                 loading.set(false)
                 panel.hide()
@@ -327,7 +311,6 @@ function init() {
 
             const malUser = getMALUsername()
             if (!malUser) {
-                console.warn("mal-friend-stats: MAL username not set, hiding panel.")
                 friends.set([])
                 configured.set(false)
                 loading.set(false)
@@ -335,6 +318,11 @@ function init() {
                 return
             }
             configured.set(true)
+
+            // Show the panel with the loading spinner immediately, before any
+            // network work (MAL ID mapping + friend fetches) happens.
+            loading.set(true)
+            panel.show()
 
             let malId: number | null = null
             try {
@@ -346,45 +334,42 @@ function init() {
                     return resolved
                 }, 24 * 60 * 60 * 1000) as number
             } catch (err) {
-                console.warn(`mal-friend-stats: could not resolve MAL ID for AniList ID: ${id}:`, (err as Error).message)
+                // Mapping failed — fall through and hide the panel.
             }
 
             if (!malId) {
                 friends.set([])
                 loading.set(false)
-                panel.show()
+                panel.hide()
                 return
             }
 
-            console.log("mal-friend-stats: Setting loading state to true and retrieving from cache or MAL...")
-            loading.set(true)
+            const cacheKey = `mfs:result:${malUser}:${malId}`
+            const cached = cacheGet(cacheKey)
+
+            if (cached) {
+                // Instant path: cached answer — no need to show the spinner.
+                friends.set(cached.value)
+                loading.set(false)
+                if (cached.value.length > 0) {
+                    panel.show()
+                } else {
+                    panel.hide()
+                }
+                return
+            }
 
             ;(async () => {
                 try {
-                    const cacheKey = `mfs:result:${malUser}:${malId}`
-                    const cached = cacheGet(cacheKey)
-
-                    let entries: FriendEntry[] = []
-                    if (cached) {
-                        entries = cached.value
-                    } else {
-                        console.log(`mal-friend-stats: cache miss or expired for ${cacheKey}. Fetching from MAL...`)
-                        entries = await fetchMalFriends(malId, malUser)
-                        cacheSet(cacheKey, entries, RESULT_TTL_MS)
-                    }
-
-                    console.log(`mal-friend-stats: retrieved ${entries.length} entries.`)
+                    const entries = await fetchMalFriends(malId, malUser)
+                    cacheSet(cacheKey, entries, RESULT_TTL_MS)
                     friends.set(entries)
-
                     if (entries.length > 0) {
-                        console.log("mal-friend-stats: Showing panel with entries.")
                         panel.show()
                     } else {
-                        console.log("mal-friend-stats: Hiding panel (no entries).")
                         panel.hide()
                     }
                 } catch (err) {
-                    console.error("mal-friend-stats: error fetching friends list:", err)
                     friends.set([])
                     panel.hide()
                 } finally {
