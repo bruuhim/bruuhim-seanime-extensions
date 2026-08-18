@@ -14,7 +14,7 @@
   "plugin": {
     "version": "1",
     "permissions": {
-      "scopes": ["anilist", "database", "anilist-token", "system", "network"],
+      "scopes": ["anilist", "database", "storage", "anilist-token", "system", "network"],
       "allow": {
         "commandScopes": [
           {

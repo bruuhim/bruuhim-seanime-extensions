@@ -24,14 +24,48 @@ function init() {
             avatar: string
         }
 
-        const friendsCache = new Map<string, { value: FriendEntry[], expiresAt: number }>()
-        const friendsListCache = new Map<string, { value: MalFriend[], expiresAt: number }>()
-        const animeListCache = new Map<string, { value: any[], expiresAt: number }>()
+        // L1: in-memory fast path — lives only while this plugin VM is alive.
+        const memoryCache = new Map<string, { value: any, complete?: boolean, expiresAt: number }>()
 
         // ──────────────────────────────── Constants ────────────────────────────────
 
         const MAX_FRIENDS = 15
-        const CACHE_TTL_MS = 10 * 60 * 1000  // 10 min
+        const FRIENDS_LIST_TTL_MS = 60 * 60 * 1000  // 1h
+        const ANIME_LIST_TTL_MS = 60 * 60 * 1000    // 1h
+        const RESULT_TTL_MS = 24 * 60 * 60 * 1000   // 24h
+
+        // ──────────────────────────────── Cache helpers ($storage-backed) ──────────
+        // Two layers:
+        //   L1: in-memory Map — fast path while this plugin VM is alive
+        //   L2: $storage — persistent across navigation / restarts (requires "storage" permission)
+        // Persistent entries are stored as { v, c, e }: v = value, c = complete flag, e = expiry (ms).
+
+        function cacheGet(key: string): { value: any, complete?: boolean } | null {
+            const now = Date.now()
+            const mem = memoryCache.get(key)
+            if (mem && mem.expiresAt > now) {
+                return { value: mem.value, complete: mem.complete }
+            }
+            try {
+                const stored = $storage.get<{ v?: any, c?: boolean, e?: number }>(key)
+                if (stored && stored.e && stored.e > now) {
+                    return { value: stored.v, complete: stored.c }
+                }
+            } catch (err) {
+                // storage unavailable — fall back to memory-only caching
+            }
+            return null
+        }
+
+        function cacheSet(key: string, value: any, ttlMs: number, complete?: boolean) {
+            const expiresAt = Date.now() + ttlMs
+            memoryCache.set(key, { value, complete, expiresAt })
+            try {
+                $storage.set(key, { v: value, c: complete, e: expiresAt })
+            } catch (err) {
+                // ignore — memory cache still provides a fast path for this session
+            }
+        }
 
         // ──────────────────────────────── Helpers ────────────────────────────────
 
@@ -81,11 +115,10 @@ function init() {
         }
 
         async function fetchFriendList(malUsername: string): Promise<MalFriend[]> {
-            const cacheKey = `friends-list-${malUsername}`
-            const now = Date.now()
+            const cacheKey = `mfs:friends:${malUsername}`
 
-            const cached = friendsListCache.get(cacheKey)
-            if (cached && cached.expiresAt > now) {
+            const cached = cacheGet(cacheKey)
+            if (cached) {
                 console.log(`mal-friend-stats: cache hit for friends list of ${malUsername}`)
                 return cached.value
             }
@@ -128,23 +161,32 @@ function init() {
                 }
             }
 
-            friendsListCache.set(cacheKey, { value: parsed, expiresAt: now + CACHE_TTL_MS })
+            cacheSet(cacheKey, parsed, FRIENDS_LIST_TTL_MS)
             return parsed
         }
 
         // Fetches a single friend's animelist (paginated only when necessary).
         // Returns [] on failure so the caller can continue with the other friends.
         async function fetchAnimeList(friend: MalFriend, malId: number): Promise<any[]> {
-            const cacheKey = friend.username.toLowerCase()
-            const now = Date.now()
+            const cacheKey = `mfs:anime:${friend.username.toLowerCase()}`
 
-            const cachedList = animeListCache.get(cacheKey)
-            if (cachedList && cachedList.expiresAt > now) {
-                return cachedList.value
+            const cached = cacheGet(cacheKey)
+            if (cached) {
+                // Target already present in the cached list → done.
+                const hit = (cached.value || []).find((e: any) => e.anime_id === malId)
+                if (hit) {
+                    return cached.value
+                }
+                // Only trust a cache entry that covers the friend's ENTIRE completed list.
+                if (cached.complete) {
+                    return cached.value
+                }
+                // Incomplete + target not present → re-fetch (list may be truncated).
             }
 
             let listData: any[] = []
             let offset = 0
+            let complete = false
             try {
                 while (offset < 900) {
                     const listUrl = `https://myanimelist.net/animelist/${encodeURIComponent(friend.username)}/load.json?status=7&offset=${offset}`
@@ -156,6 +198,8 @@ function init() {
 
                     const pageData = listResp.json<any[]>()
                     if (!pageData || !pageData.length) {
+                        // Reached the end of the friend's list.
+                        complete = true
                         break
                     }
 
@@ -163,17 +207,16 @@ function init() {
 
                     // Early exit once we found the target anime, or when the page
                     // was not completely full (no more pages exist).
-                    if (pageData.length < 300 || listData.some(e => e.anime_id === malId)) {
+                    const found = listData.some(e => e.anime_id === malId)
+                    if (found || pageData.length < 300) {
+                        complete = pageData.length < 300
                         break
                     }
 
                     offset += 300
                 }
 
-                animeListCache.set(cacheKey, {
-                    value: listData,
-                    expiresAt: now + CACHE_TTL_MS
-                })
+                cacheSet(cacheKey, listData, ANIME_LIST_TTL_MS, complete)
             } catch (err) {
                 console.error(`mal-friend-stats: error checking animelist for friend ${friend.username}:`, err)
             }
@@ -318,20 +361,16 @@ function init() {
 
             ;(async () => {
                 try {
-                    const cacheKey = `mal-friends-${malUser}-${malId}`
-                    const cached = friendsCache.get(cacheKey)
-                    const now = Date.now()
+                    const cacheKey = `mfs:result:${malUser}:${malId}`
+                    const cached = cacheGet(cacheKey)
 
                     let entries: FriendEntry[] = []
-                    if (cached && cached.expiresAt > now) {
+                    if (cached) {
                         entries = cached.value
                     } else {
                         console.log(`mal-friend-stats: cache miss or expired for ${cacheKey}. Fetching from MAL...`)
                         entries = await fetchMalFriends(malId, malUser)
-                        friendsCache.set(cacheKey, {
-                            value: entries,
-                            expiresAt: now + CACHE_TTL_MS
-                        })
+                        cacheSet(cacheKey, entries, RESULT_TTL_MS)
                     }
 
                     console.log(`mal-friend-stats: retrieved ${entries.length} entries.`)
