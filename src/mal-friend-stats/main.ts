@@ -31,7 +31,6 @@ function init() {
 
         // ──────────────────────────────── Constants ────────────────────────────────
 
-        const MAX_FRIENDS = 15
         const FRIENDS_LIST_TTL_MS = 60 * 60 * 1000  // 1h
         const LIST_TTL_MS = 60 * 60 * 1000          // 1h
         const RESULT_TTL_MS = 24 * 60 * 60 * 1000   // 24h
@@ -217,20 +216,19 @@ function init() {
         async function fetchMalFriends(malId: number, malUsername: string, mediaType: MediaType): Promise<FriendEntry[]> {
             const friends = await fetchFriendList(malUsername)
 
-            const limit = Math.min(friends.length, MAX_FRIENDS)
             const results: FriendEntry[] = []
 
-            // Fetch ALL friend lists in parallel — no staggering, no
-            // artificial delays. Worst case is one network round-trip.
+            // Fetch ALL friend lists in parallel — no staggering, no artificial
+            // delays, no friend cap. Every friend is checked so no one is missed.
             const lists = await Promise.all(
-                friends.slice(0, limit).map((friend) => fetchFriendListData(friend, malId, mediaType))
+                friends.map((friend) => fetchFriendListData(friend, malId, mediaType))
             )
 
             const idField = mediaType === "manga" ? "manga_id" : "anime_id"
             const progressField = mediaType === "manga" ? "num_read_chapters" : "num_watched_episodes"
             const totalField = mediaType === "manga" ? "manga_num_chapters" : "anime_num_episodes"
 
-            for (let i = 0; i < limit; i++) {
+            for (let i = 0; i < friends.length; i++) {
                 const friend = friends[i]
                 const listData = lists[i] || []
                 const match = listData.find(e => e[idField] === malId)
@@ -559,7 +557,7 @@ function init() {
         heading.appendChild(document.createTextNode("MAL Friends"))
         var badge = document.createElement("span")
         badge.className = "badge"
-        badge.textContent = _mediaType === "manga" ? "MANGA" : "MAL"
+        badge.textContent = "MAL"
         heading.appendChild(badge)
         app.appendChild(heading)
 
