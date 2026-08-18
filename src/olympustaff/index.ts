@@ -262,9 +262,9 @@ class Provider {
 
                 if (src && !src.includes("logo") && !src.includes("icon")) {
                     // Filter out promotional banners:
-                    // 1. Must contain /uploads/ (standard for manga pages on OlympusStaff)
+                    // 1. Must contain /uploads/manga_ (standard for manga pages on OlympusStaff)
                     // 2. Parent link (if exists) must not point to external domains
-                    if (!src.includes("/uploads/")) return
+                    if (!src.includes("/uploads/manga_")) return
 
                     const parentA = el.parent("a")
                     if (parentA.length > 0) {
