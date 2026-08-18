@@ -8,11 +8,13 @@ function init() {
 
         // ──────────────────────────────── Types ────────────────────────────────
 
+        type MediaType = "anime" | "manga"
+
         interface FriendEntry {
             status: string
             score: number
             progress: number
-            totalEpisodes?: number
+            total?: number
             user: {
                 name: string
                 avatar?: string
@@ -31,7 +33,7 @@ function init() {
 
         const MAX_FRIENDS = 15
         const FRIENDS_LIST_TTL_MS = 60 * 60 * 1000  // 1h
-        const ANIME_LIST_TTL_MS = 60 * 60 * 1000    // 1h
+        const LIST_TTL_MS = 60 * 60 * 1000          // 1h
         const RESULT_TTL_MS = 24 * 60 * 60 * 1000   // 24h
 
         // ──────────────────────────────── Cache helpers ($storage-backed) ──────────
@@ -69,9 +71,9 @@ function init() {
 
         // ──────────────────────────────── Helpers ────────────────────────────────
 
-        function mapMALStatus(statusNum: number): string {
+        function mapMALStatus(statusNum: number, mediaType: MediaType): string {
             switch (statusNum) {
-                case 1:  return "CURRENT"
+                case 1:  return mediaType === "manga" ? "READING" : "CURRENT"
                 case 2:  return "COMPLETED"
                 case 3:  return "PAUSED"
                 case 4:  return "DROPPED"
@@ -152,19 +154,21 @@ function init() {
             return parsed
         }
 
-        // Fetches a single friend's animelist (paginated only when necessary).
+        // Fetches a single friend's anime/manga list (paginated only when necessary).
         // Returns [] on failure so the caller can continue with the other friends.
-        async function fetchAnimeList(friend: MalFriend, malId: number): Promise<any[]> {
-            const cacheKey = `mfs:anime:${friend.username.toLowerCase()}`
+        async function fetchFriendListData(friend: MalFriend, malId: number, mediaType: MediaType): Promise<any[]> {
+            const cacheKey = `mfs:${mediaType}:${friend.username.toLowerCase()}`
+
+            const idField = mediaType === "manga" ? "manga_id" : "anime_id"
 
             const cached = cacheGet(cacheKey)
             if (cached) {
                 // Target already present in the cached list → done.
-                const hit = (cached.value || []).find((e: any) => e.anime_id === malId)
+                const hit = (cached.value || []).find((e: any) => e[idField] === malId)
                 if (hit) {
                     return cached.value
                 }
-                // Only trust a cache entry that covers the friend's ENTIRE completed list.
+                // Only trust a cache entry that covers the friend's ENTIRE list.
                 if (cached.complete) {
                     return cached.value
                 }
@@ -176,7 +180,7 @@ function init() {
             let complete = false
             try {
                 while (offset < 900) {
-                    const listUrl = `https://myanimelist.net/animelist/${encodeURIComponent(friend.username)}/load.json?status=7&offset=${offset}`
+                    const listUrl = `https://myanimelist.net/${mediaType}list/${encodeURIComponent(friend.username)}/load.json?status=7&offset=${offset}`
                     const listResp = await ctx.fetch(listUrl)
                     if (!listResp || !listResp.ok) {
                         break
@@ -191,9 +195,9 @@ function init() {
 
                     listData = listData.concat(pageData)
 
-                    // Early exit once we found the target anime, or when the page
+                    // Early exit once we found the target media, or when the page
                     // was not completely full (no more pages exist).
-                    const found = listData.some(e => e.anime_id === malId)
+                    const found = listData.some(e => e[idField] === malId)
                     if (found || pageData.length < 300) {
                         complete = pageData.length < 300
                         break
@@ -202,7 +206,7 @@ function init() {
                     offset += 300
                 }
 
-                cacheSet(cacheKey, listData, ANIME_LIST_TTL_MS, complete)
+                cacheSet(cacheKey, listData, LIST_TTL_MS, complete)
             } catch (err) {
                 // Silently ignore — caller continues with the other friends.
             }
@@ -210,28 +214,32 @@ function init() {
             return listData
         }
 
-        async function fetchMalFriends(malId: number, malUsername: string): Promise<FriendEntry[]> {
+        async function fetchMalFriends(malId: number, malUsername: string, mediaType: MediaType): Promise<FriendEntry[]> {
             const friends = await fetchFriendList(malUsername)
 
             const limit = Math.min(friends.length, MAX_FRIENDS)
             const results: FriendEntry[] = []
 
-            // Fetch ALL friend animelists in parallel — no staggering, no
+            // Fetch ALL friend lists in parallel — no staggering, no
             // artificial delays. Worst case is one network round-trip.
             const lists = await Promise.all(
-                friends.slice(0, limit).map((friend) => fetchAnimeList(friend, malId))
+                friends.slice(0, limit).map((friend) => fetchFriendListData(friend, malId, mediaType))
             )
+
+            const idField = mediaType === "manga" ? "manga_id" : "anime_id"
+            const progressField = mediaType === "manga" ? "num_read_chapters" : "num_watched_episodes"
+            const totalField = mediaType === "manga" ? "manga_num_chapters" : "anime_num_episodes"
 
             for (let i = 0; i < limit; i++) {
                 const friend = friends[i]
                 const listData = lists[i] || []
-                const match = listData.find(e => e.anime_id === malId)
+                const match = listData.find(e => e[idField] === malId)
                 if (match) {
                     results.push({
-                        status: mapMALStatus(match.status),
+                        status: mapMALStatus(match.status, mediaType),
                         score: (match.score || 0) * 10,
-                        progress: match.num_watched_episodes || 0,
-                        totalEpisodes: match.anime_num_episodes ?? undefined,
+                        progress: match[progressField] || 0,
+                        total: match[totalField] ?? undefined,
                         user: {
                             name: friend.username,
                             avatar: friend.avatar || undefined,
@@ -246,23 +254,39 @@ function init() {
         // ──────────────────────────────── Plugin Entry ────────────────────────────────
 
         const mediaId = ctx.state(0)
+        const mediaType = ctx.state<MediaType | null>(null)
         const friends = ctx.state<FriendEntry[]>([])
         const loading = ctx.state(false)
         const configured = ctx.state(false)
 
-        const panel = ctx.newWebview({
+        const animePanel = ctx.newWebview({
             slot: "after-anime-entry-episode-list",
             fullWidth: true,
             autoHeight: true,
         })
 
-        panel.channel.sync("friends", friends)
-        panel.channel.sync("loading", loading)
-        panel.channel.sync("configured", configured)
+        const mangaPanel = ctx.newWebview({
+            slot: "after-manga-entry-chapter-list",
+            fullWidth: true,
+            autoHeight: true,
+        })
+
+        // Both panels share the same state and content — only the slot differs.
+        animePanel.channel.sync("friends", friends)
+        animePanel.channel.sync("loading", loading)
+        animePanel.channel.sync("configured", configured)
+        animePanel.channel.sync("mediaType", mediaType)
+        mangaPanel.channel.sync("friends", friends)
+        mangaPanel.channel.sync("loading", loading)
+        mangaPanel.channel.sync("configured", configured)
+        mangaPanel.channel.sync("mediaType", mediaType)
 
         // ── Open profile links ──
         const openUrl = ctx.state("")
-        panel.channel.on("open-profile", (url: string) => {
+        animePanel.channel.on("open-profile", (url: string) => {
+            openUrl.set(url)
+        })
+        mangaPanel.channel.on("open-profile", (url: string) => {
             openUrl.set(url)
         })
 
@@ -285,16 +309,33 @@ function init() {
 
         // ── Track navigation ──
         ctx.screen.onNavigate((e) => {
-            const id = e.pathname === "/entry" && !!e.searchParams.id
-                ? parseInt(e.searchParams.id)
-                : 0
+            let type: MediaType | null = null
+            if (e.pathname === "/entry" && !!e.searchParams.id) {
+                type = "anime"
+            } else if (e.pathname.startsWith("/manga/entry") && !!e.searchParams.id) {
+                type = "manga"
+            }
+
+            const id = type ? parseInt(e.searchParams.id) : 0
             mediaId.set(id)
-            // Show the loading state as soon as we land on an anime page so the
+            mediaType.set(type)
+
+            if (!type) {
+                animePanel.hide()
+                mangaPanel.hide()
+                return
+            }
+
+            // Show the loading state as soon as we land on an entry page so the
             // user always sees feedback while the plugin is working.
-            if (id) {
-                friends.set([])
-                loading.set(true)
-                panel.show()
+            friends.set([])
+            loading.set(true)
+            if (type === "anime") {
+                animePanel.show()
+                mangaPanel.hide()
+            } else {
+                mangaPanel.show()
+                animePanel.hide()
             }
         })
         ctx.screen.loadCurrent()
@@ -302,12 +343,16 @@ function init() {
         // ── Main effect ──
         ctx.effect(() => {
             const id = mediaId.get()
-            if (!id) {
+            const type = mediaType.get()
+            if (!id || !type) {
                 friends.set([])
                 loading.set(false)
-                panel.hide()
+                animePanel.hide()
+                mangaPanel.hide()
                 return
             }
+
+            const panel = type === "anime" ? animePanel : mangaPanel
 
             const malUser = getMALUsername()
             if (!malUser) {
@@ -344,7 +389,7 @@ function init() {
                 return
             }
 
-            const cacheKey = `mfs:result:${malUser}:${malId}`
+            const cacheKey = `mfs:result:${type}:${malUser}:${malId}`
             const cached = cacheGet(cacheKey)
 
             if (cached) {
@@ -361,7 +406,7 @@ function init() {
 
             ;(async () => {
                 try {
-                    const entries = await fetchMalFriends(malId, malUser)
+                    const entries = await fetchMalFriends(malId, malUser, type)
                     cacheSet(cacheKey, entries, RESULT_TTL_MS)
                     friends.set(entries)
                     if (entries.length > 0) {
@@ -376,10 +421,10 @@ function init() {
                     loading.set(false)
                 }
             })()
-        }, [mediaId])
+        }, [mediaId, mediaType])
 
-        // ── UI ──
-        panel.setContent(() => `
+        // ── UI (shared by both panels) ──
+        const panelContent = `
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -414,8 +459,8 @@ function init() {
 <body>
 <div id="app"></div>
 <script>
-    var STATUS_LABEL = {"CURRENT":"Watching","PLANNING":"Planning","COMPLETED":"Completed","DROPPED":"Dropped","PAUSED":"On Hold","REPEATING":"Rewatching"}
-    var STATUS_COLOR = {"CURRENT":"#3db4f2","PLANNING":"#f2c94c","COMPLETED":"#4cd137","DROPPED":"#e84118","PAUSED":"#a4a4a4","REPEATING":"#9b59b6"}
+    var STATUS_LABEL = {"READING":"Reading","CURRENT":"Watching","PLANNING":"Planning","COMPLETED":"Completed","DROPPED":"Dropped","PAUSED":"On Hold","REPEATING":"Rewatching"}
+    var STATUS_COLOR = {"READING":"#3db4f2","CURRENT":"#3db4f2","PLANNING":"#f2c94c","COMPLETED":"#4cd137","DROPPED":"#e84118","PAUSED":"#a4a4a4","REPEATING":"#9b59b6"}
 
     function scoreColor(s) {
         if (s >= 80) return "#4cd137"
@@ -452,7 +497,8 @@ function init() {
         if (entry.progress > 0 && entry.status !== "COMPLETED") {
             var ep = document.createElement("div")
             ep.className = "episode"
-            ep.textContent = "Ep " + entry.progress + (entry.totalEpisodes ? "/" + entry.totalEpisodes : "")
+            var prefix = _mediaType === "manga" ? "Ch " : "Ep "
+            ep.textContent = prefix + entry.progress + (entry.total ? "/" + entry.total : "")
             row.appendChild(ep)
         }
 
@@ -499,7 +545,9 @@ function init() {
         if (!friends || friends.length === 0) {
             var empty = document.createElement("div")
             empty.className = "empty"
-            empty.textContent = "No MAL friends found for this anime"
+            empty.textContent = _mediaType === "manga"
+                ? "No MAL friends found for this manga"
+                : "No MAL friends found for this anime"
             app.appendChild(empty)
             return
         }
@@ -511,7 +559,7 @@ function init() {
         heading.appendChild(document.createTextNode("MAL Friends"))
         var badge = document.createElement("span")
         badge.className = "badge"
-        badge.textContent = "MAL"
+        badge.textContent = _mediaType === "manga" ? "MANGA" : "MAL"
         heading.appendChild(badge)
         app.appendChild(heading)
 
@@ -524,15 +572,19 @@ function init() {
     var _friends = []
     var _loading = false
     var _configured = false
+    var _mediaType = "anime"
 
     function rerender() { render(_friends, _loading, _configured) }
 
     window.webview.on("friends", function (d) { _friends = d || []; rerender() })
     window.webview.on("loading", function (d) { _loading = !!d; rerender() })
     window.webview.on("configured", function (d) { _configured = !!d; rerender() })
+    window.webview.on("mediaType", function (d) { _mediaType = d === "manga" ? "manga" : "anime"; rerender() })
 </script>
 </body>
 </html>
-        `)
+        `
+        animePanel.setContent(() => panelContent)
+        mangaPanel.setContent(() => panelContent)
     })
 }
