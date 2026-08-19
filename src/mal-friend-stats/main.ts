@@ -31,7 +31,7 @@ function init() {
 
         // ──────────────────────────────── Constants ────────────────────────────────
 
-        const PLUGIN_VERSION = "1.0.3"
+        const PLUGIN_VERSION = "1.0.4"
 
         const FRIENDS_LIST_TTL_MS = 60 * 60 * 1000  // 1h
         const LIST_TTL_MS = 60 * 60 * 1000          // 1h
@@ -253,16 +253,48 @@ function init() {
             return listData
         }
 
+        // Limits active concurrent promises to prevent network rate limits when checking many friends.
+        async function pLimit<T>(concurrency: number, tasks: (() => Promise<T>)[]): Promise<T[]> {
+            const results: T[] = []
+            let activeCount = 0
+            let nextIndex = 0
+
+            return new Promise<T[]>((resolve) => {
+                function runNext() {
+                    if (nextIndex >= tasks.length && activeCount === 0) {
+                        resolve(results)
+                        return
+                    }
+
+                    while (activeCount < concurrency && nextIndex < tasks.length) {
+                        const currentIndex = nextIndex++
+                        activeCount++
+                        tasks[currentIndex]()
+                            .then((res) => {
+                                results[currentIndex] = res
+                            })
+                            .catch(() => {
+                                results[currentIndex] = [] as any
+                            })
+                            .finally(() => {
+                                activeCount--
+                                runNext()
+                            })
+                    }
+                }
+                runNext()
+            })
+        }
+
         async function fetchMalFriends(malId: number, malUsername: string, mediaType: MediaType): Promise<FriendEntry[]> {
             const friends = await fetchFriendList(malUsername)
 
             const results: FriendEntry[] = []
 
-            // Fetch ALL friend lists in parallel — no staggering, no artificial
-            // delays, no friend cap. Every friend is checked so no one is missed.
-            const lists = await Promise.all(
-                friends.map((friend) => fetchFriendListData(friend, malId, mediaType))
-            )
+            // Fetch ALL friend lists with concurrency limiting (max 5 active requests at a time).
+            // This prevents MyAnimeList from rate-limiting us while still checking everyone.
+            const tasks = friends.map((friend) => () => fetchFriendListData(friend, malId, mediaType))
+            const lists = await pLimit(5, tasks)
 
             const idField = mediaType === "manga" ? "manga_id" : "anime_id"
             const progressField = mediaType === "manga" ? "num_read_chapters" : "num_watched_episodes"
