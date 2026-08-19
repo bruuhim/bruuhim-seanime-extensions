@@ -52,7 +52,7 @@ Seanime plugin extensions that enhance your anime browsing experience directly w
 
 | Plugin | Version | Description | Installation Manifest (URL) |
 | :--- | :--- | :--- | :--- |
-| <img src="assets/mal-friend-stats.png" width="24" height="24" /> **MAL Friend Stats** | 1.0.3 | Shows which of your MyAnimeList friends are watching, have read, or rated the **anime or manga** you're viewing — checks your entire friend list | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/src/mal-friend-stats/manifest.json` |
+| <img src="assets/mal-friend-stats.png" width="24" height="24" /> **MAL Friend Stats** | 1.0.4 | Shows which of your MyAnimeList friends are watching, have read, or rated the **anime or manga** you're viewing — checks your entire friend list, rate-limit safe | `https://raw.githubusercontent.com/bruuhim/bruuhim-seanime-extensions/main/src/mal-friend-stats/manifest.json` |
 
 <br />
 
